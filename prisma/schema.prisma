@@ -1,0 +1,35 @@
+// SQLite schema for the local build. Single-file DB, zero setup.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Lead {
+  id             Int      @id @default(autoincrement())
+  redditId       String   @unique @map("reddit_id")
+  title          String
+  subreddit      String
+  url            String
+  author         String
+  selftext       String
+  score          Int      @default(0)
+  numComments    Int      @default(0) @map("num_comments")
+  keyword        String
+  status         String   @default("pending")
+  relevanceScore Float    @default(0.0) @map("relevance_score")
+  sentiment      String   @default("")
+  urgency        String   @default("")
+  leadType       String   @default("") @map("lead_type")
+  role           String   @default("") // buyer | seller | advisor | other
+  reasoning      String   @default("")
+  suggestedReply String   @default("") @map("suggested_reply")
+  foundVia       String   @default("manual") @map("found_via")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("leads")
+}

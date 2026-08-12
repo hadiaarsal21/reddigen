@@ -1,0 +1,23 @@
+# Core ML stack
+torch>=2.2.0
+transformers>=4.40.0
+sentence-transformers>=2.7.0
+datasets>=2.18.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Parameter-efficient fine-tuning
+peft>=0.10.0
+accelerate>=0.29.0
+
+# Serving
+fastapi>=0.111.0
+uvicorn>=0.29.0
+pydantic>=2.7.0
+
+# Vector search (Discover / semantic subreddit retrieval)
+faiss-cpu>=1.7.4
+
+# NLP preprocessing helpers
+nltk>=3.8.1

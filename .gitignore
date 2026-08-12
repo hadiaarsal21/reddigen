@@ -1,0 +1,29 @@
+# Node
+node_modules/
+.next/
+next-env.d.ts.bak
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Prisma
+prisma/dev.db
+prisma/dev.db-journal
+
+# Trained models (large — keep out of git; docs explain how to reproduce)
+ml/models/*
+!ml/models/.gitkeep
+
+# Env + local
+.env
+.env.local
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

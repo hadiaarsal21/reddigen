@@ -1,0 +1,4 @@
+# Trained model checkpoints go here. See ml/data/README.md for training data
+# and ml/train_*.py for the training scripts. Checkpoints are gitignored
+# (they're too large for git) — regenerate them by running the training
+# scripts.

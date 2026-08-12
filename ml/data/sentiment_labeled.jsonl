@@ -1,0 +1,47 @@
+{"text": "This tool is amazing, saved me hours every week", "sentiment": "positive", "urgency": "low"}
+{"text": "Love the new update, exactly what I needed", "sentiment": "positive", "urgency": "low"}
+{"text": "Best purchase I've made this year, highly recommend", "sentiment": "positive", "urgency": "low"}
+{"text": "Great product, works exactly as advertised", "sentiment": "positive", "urgency": "low"}
+{"text": "Really happy with the customer service, they went above and beyond", "sentiment": "positive", "urgency": "low"}
+{"text": "This is a solid tool, been using it for 6 months without issues", "sentiment": "positive", "urgency": "low"}
+{"text": "Just launched with their help, super smooth process", "sentiment": "positive", "urgency": "low"}
+{"text": "Fantastic support team, quick to respond and knowledgeable", "sentiment": "positive", "urgency": "low"}
+{"text": "This is decent, does what it says on the tin", "sentiment": "neutral", "urgency": "low"}
+{"text": "It works, not great not terrible", "sentiment": "neutral", "urgency": "low"}
+{"text": "Just started using it, too early to tell if it's worth it", "sentiment": "neutral", "urgency": "low"}
+{"text": "Interesting concept, seems okay so far", "sentiment": "neutral", "urgency": "low"}
+{"text": "The tool is fine, has some quirks but nothing major", "sentiment": "neutral", "urgency": "low"}
+{"text": "Considering the alternatives, not sure yet", "sentiment": "neutral", "urgency": "low"}
+{"text": "It's fine for the price, wouldn't call it exceptional", "sentiment": "neutral", "urgency": "low"}
+{"text": "This tool is terrible, wasted money and time", "sentiment": "negative", "urgency": "medium"}
+{"text": "Absolutely awful support, took 3 weeks to get a reply", "sentiment": "negative", "urgency": "low"}
+{"text": "The worst experience I've had with a SaaS tool, avoid at all costs", "sentiment": "negative", "urgency": "low"}
+{"text": "Hate the new interface, everything is harder to find now", "sentiment": "negative", "urgency": "low"}
+{"text": "Complete garbage, doesn't work as advertised", "sentiment": "negative", "urgency": "medium"}
+{"text": "Really disappointed with the recent changes, considering switching", "sentiment": "negative", "urgency": "medium"}
+{"text": "URGENT: server is down and I can't reach support!", "sentiment": "negative", "urgency": "high"}
+{"text": "My production site is broken RIGHT NOW, need help immediately", "sentiment": "negative", "urgency": "high"}
+{"text": "Payment failed and my subscription got cancelled — need this fixed ASAP", "sentiment": "negative", "urgency": "high"}
+{"text": "Deadline tomorrow morning, tool crashed, I'm panicking", "sentiment": "negative", "urgency": "high"}
+{"text": "Client demo in 2 hours and nothing is working, please help", "sentiment": "negative", "urgency": "high"}
+{"text": "Emergency: data got corrupted, need recovery help urgently", "sentiment": "negative", "urgency": "high"}
+{"text": "Site has been down for 3 hours, losing customers, need this NOW", "sentiment": "negative", "urgency": "high"}
+{"text": "Need to buy this today, offer expires tonight", "sentiment": "positive", "urgency": "high"}
+{"text": "Looking for a solution by end of week, project deadline is tight", "sentiment": "neutral", "urgency": "high"}
+{"text": "Anyone available for a rush job? Need it done by Monday", "sentiment": "neutral", "urgency": "high"}
+{"text": "Considering switching in the next few months, doing research", "sentiment": "neutral", "urgency": "medium"}
+{"text": "Might buy this next quarter, evaluating options now", "sentiment": "neutral", "urgency": "low"}
+{"text": "Just browsing, no rush", "sentiment": "neutral", "urgency": "low"}
+{"text": "Love the direction the product is heading, exciting times", "sentiment": "positive", "urgency": "low"}
+{"text": "Really enjoying using this daily", "sentiment": "positive", "urgency": "low"}
+{"text": "Total waste of $50, want a refund", "sentiment": "negative", "urgency": "medium"}
+{"text": "Not the worst but honestly overpriced for what you get", "sentiment": "negative", "urgency": "low"}
+{"text": "Product works but the pricing feels predatory", "sentiment": "negative", "urgency": "low"}
+{"text": "Excellent value, worth every penny", "sentiment": "positive", "urgency": "low"}
+{"text": "Good tool overall, minor issues but usable", "sentiment": "neutral", "urgency": "low"}
+{"text": "Broken pipeline, entire team is blocked, help now", "sentiment": "negative", "urgency": "high"}
+{"text": "Migrating soon, need advice this week", "sentiment": "neutral", "urgency": "medium"}
+{"text": "Best decision I made this quarter", "sentiment": "positive", "urgency": "low"}
+{"text": "Their onboarding was smooth, no complaints", "sentiment": "positive", "urgency": "low"}
+{"text": "Ok product, meh support", "sentiment": "neutral", "urgency": "low"}
+{"text": "Getting quotes now for a project starting next month", "sentiment": "neutral", "urgency": "medium"}
