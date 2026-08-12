@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { DashboardShell } from '@/components/DashboardShell';
+import { Icon } from '@/components/Icon';
 
 interface Lead {
   id: number;
@@ -19,12 +21,20 @@ interface Lead {
   suggestedReply: string;
   keyword: string;
   status: string;
+  foundVia: string;
   createdAt: string;
 }
+
+const TABS = [
+  { id: 'all', label: 'All' },
+  { id: 'pending', label: 'Pending' },
+  { id: 'replied', label: 'Replied' },
+];
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState('all');
 
   useEffect(() => {
     fetch('/api/leads')
@@ -50,77 +60,105 @@ export default function LeadsPage() {
     await fetch(`/api/leads?id=${id}`, { method: 'DELETE' });
   }
 
+  const filtered =
+    tab === 'all' ? leads : leads.filter((l) => l.status === tab);
+
   return (
-    <div>
-      <h1 className="rg-h1">Leads</h1>
-      <p className="rg-lede">
-        All the scored leads you&apos;ve saved from the dashboard. Storage is a
-        local SQLite database at <code>prisma/dev.db</code>.
+    <DashboardShell activeHref="/leads" crumb="Leads">
+      <h1 className="page-title">Leads</h1>
+      <p className="page-subtitle">
+        Scored leads saved from Search, Deep Scan, and Discover. Storage is a local
+        SQLite database — <code>prisma/dev.db</code>.
       </p>
 
-      {loading && <div className="rg-empty"><span className="rg-loading" /> Loading…</div>}
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border-subtle)' }}>
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            style={{
+              padding: '10px 16px',
+              fontSize: 13,
+              fontWeight: 600,
+              background: 'transparent',
+              border: 'none',
+              borderBottom: `2px solid ${tab === t.id ? 'var(--brand-primary)' : 'transparent'}`,
+              color: tab === t.id ? 'var(--brand-primary)' : 'var(--text-secondary)',
+              cursor: 'pointer',
+              marginBottom: -1,
+            }}
+          >
+            {t.label}{' '}
+            <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>
+              {t.id === 'all' ? leads.length : leads.filter((l) => l.status === t.id).length}
+            </span>
+          </button>
+        ))}
+      </div>
 
-      {!loading && leads.length === 0 && (
-        <div className="rg-empty">
-          <p>No leads saved yet.</p>
-          <Link href="/dashboard" className="rg-btn" style={{ marginTop: 12 }}>
-            Run your first search →
+      {loading && <div className="empty"><span className="spinner" /> Loading…</div>}
+
+      {!loading && filtered.length === 0 && (
+        <div className="empty">
+          <p>No leads yet.</p>
+          <Link href="/dashboard" className="btn btn-primary" style={{ marginTop: 16 }}>
+            <Icon name="search" size={14} /> Run your first search
           </Link>
         </div>
       )}
 
-      {leads.map((l) => {
+      {filtered.map((l) => {
         const relPct = Math.round(l.relevanceScore * 100);
-        const relTone = relPct >= 70 ? 'g' : relPct >= 40 ? 'w' : 'r';
-        const urgTone = l.urgency === 'high' ? 'r' : l.urgency === 'medium' ? 'w' : '';
+        const relKind = relPct >= 70 ? 'hot' : relPct >= 40 ? 'warm' : 'cold';
+        const urgKind = l.urgency === 'high' ? 'hot' : l.urgency === 'medium' ? 'warm' : 'cold';
         return (
-          <div key={l.id} className="rg-lead">
-            <div className="rg-lead-head">
-              <div>
-                <a href={l.url} target="_blank" rel="noreferrer" className="rg-lead-title">
+          <div key={l.id} className="lead">
+            <div className="lead-head">
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <a href={l.url} target="_blank" rel="noreferrer" className="lead-title">
                   {l.title}
                 </a>
-                <div className="rg-lead-meta">
-                  r/{l.subreddit} · u/{l.author} · saved {new Date(l.createdAt).toLocaleString()}
+                <div className="lead-meta">
+                  r/{l.subreddit} · u/{l.author} · saved {new Date(l.createdAt).toLocaleString()} · via {l.foundVia}
                 </div>
               </div>
-              <span className={`rg-score-pill rg-tag ${l.status === 'replied' ? 'g' : ''}`}>
+              <span className={`pill ${l.status === 'replied' ? 'success' : 'neutral'}`}>
                 {l.status}
               </span>
             </div>
             {l.selftext && (
-              <div className="rg-lead-body">
-                {l.selftext.slice(0, 240)}{l.selftext.length > 240 ? '…' : ''}
+              <div className="lead-body">
+                {l.selftext.slice(0, 260)}{l.selftext.length > 260 ? '…' : ''}
               </div>
             )}
-            <div className="rg-lead-scores">
-              <span className={`rg-score-pill rg-tag ${relTone}`}>relevance {relPct}%</span>
-              {l.leadType && <span className="rg-score-pill rg-tag">intent: {l.leadType}</span>}
-              {l.urgency && (
-                <span className={`rg-score-pill rg-tag ${urgTone}`}>urgency: {l.urgency}</span>
-              )}
-              {l.role && <span className="rg-score-pill rg-tag">role: {l.role}</span>}
+            <div className="lead-pills">
+              <span className={`pill ${relKind}`}>relevance {relPct}%</span>
+              {l.leadType && <span className="pill brand">intent: {l.leadType.replace('_', ' ')}</span>}
+              {l.urgency && <span className={`pill ${urgKind}`}>urgency: {l.urgency}</span>}
+              {l.role && <span className="pill purple">role: {l.role}</span>}
             </div>
-            {l.suggestedReply && <div className="rg-reply">{l.suggestedReply}</div>}
-            <div className="rg-lead-actions" style={{ marginTop: 12 }}>
+            {l.suggestedReply && <div className="reply-box">{l.suggestedReply}</div>}
+            <div className="lead-actions">
               {l.status !== 'replied' && (
-                <button className="rg-btn-ghost" onClick={() => toggleStatus(l.id, 'replied')}>
-                  Mark replied
+                <button className="btn btn-ghost" onClick={() => toggleStatus(l.id, 'replied')}>
+                  <Icon name="check" size={13} /> Mark replied
                 </button>
               )}
               {l.status === 'replied' && (
-                <button className="rg-btn-ghost" onClick={() => toggleStatus(l.id, 'pending')}>
-                  Un-mark
+                <button className="btn btn-ghost" onClick={() => toggleStatus(l.id, 'pending')}>
+                  <Icon name="refresh" size={13} /> Un-mark
                 </button>
               )}
-              <button className="rg-btn-ghost" onClick={() => del(l.id)}>Delete</button>
-              <a className="rg-btn-ghost" href={l.url} target="_blank" rel="noreferrer">
-                Open ↗
+              <button className="btn btn-ghost" onClick={() => del(l.id)}>
+                <Icon name="trash" size={13} /> Delete
+              </button>
+              <a className="btn btn-ghost" href={l.url} target="_blank" rel="noreferrer">
+                Open <Icon name="external" size={12} />
               </a>
             </div>
           </div>
         );
       })}
-    </div>
+    </DashboardShell>
   );
 }

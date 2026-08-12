@@ -28,8 +28,23 @@ model Lead {
   role           String   @default("") // buyer | seller | advisor | other
   reasoning      String   @default("")
   suggestedReply String   @default("") @map("suggested_reply")
+  // Where the lead came from: 'search' | 'deep_scan' | 'discover' | 'manual'
   foundVia       String   @default("manual") @map("found_via")
+  // Deep-scan-specific: the parent post this comment was found under
+  parentPostId   String?  @map("parent_post_id")
+  parentPostUrl  String?  @map("parent_post_url")
   createdAt      DateTime @default(now()) @map("created_at")
 
   @@map("leads")
+}
+
+model DiscoverSession {
+  id               Int      @id @default(autoincrement())
+  productQuery     String   @map("product_query")
+  subredditCount   Int      @default(0) @map("subreddit_count")
+  // JSON-stringified array of {name, description, subscribers, score, sample_posts}
+  resultsJson      String   @default("[]") @map("results_json")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("discover_sessions")
 }

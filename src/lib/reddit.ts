@@ -25,6 +25,25 @@ export interface RedditPost {
   num_comments: number;
 }
 
+export interface RedditComment {
+  id: string;
+  author: string;
+  body: string;
+  score: number;
+  post_id: string;
+  post_title: string;
+  post_permalink: string;
+  subreddit: string;
+}
+
+export interface SubredditInfo {
+  name: string;
+  title: string;
+  description: string;
+  subscribers: number;
+  active_users: number;
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function fetchWithRetry(url: string, retries = 2): Promise<Response | null> {
@@ -93,5 +112,82 @@ export async function searchReddit(
   } catch (err) {
     console.warn('[reddit] JSON parse failed', err);
     return [];
+  }
+}
+
+/**
+ * Fetch top-level comments for a given post ID. Used by Deep Scan to
+ * mine buyer signals from replies under sellers'/service providers' posts.
+ */
+export async function fetchComments(
+  postId: string,
+  subreddit: string,
+  limit = 100,
+): Promise<RedditComment[]> {
+  // Reddit's JSON API returns [post_listing, comments_listing]
+  const url =
+    `https://www.reddit.com/r/${subreddit}/comments/${postId}.json` +
+    `?limit=${limit}&sort=new`;
+  const res = await fetchWithRetry(url);
+  if (!res || !res.ok) return [];
+
+  try {
+    const data = await res.json();
+    if (!Array.isArray(data) || data.length < 2) return [];
+    const postData = data[0]?.data?.children?.[0]?.data;
+    const commentTree: any[] = data[1]?.data?.children ?? [];
+    const postTitle = postData?.title || '';
+    const postPermalink = `https://www.reddit.com${postData?.permalink || ''}`;
+
+    const out: RedditComment[] = [];
+    function walk(nodes: any[]) {
+      for (const n of nodes) {
+        if (n?.kind !== 't1') continue;
+        const d = n.data;
+        const body = (d.body || '').trim();
+        if (!body || body === '[deleted]' || body === '[removed]') continue;
+        if (body.length < 10) continue;
+        out.push({
+          id: d.id,
+          author: d.author || 'unknown',
+          body: body.substring(0, 1500),
+          score: d.score || 0,
+          post_id: postId,
+          post_title: postTitle,
+          post_permalink: postPermalink,
+          subreddit,
+        });
+        const replies = d.replies?.data?.children;
+        if (Array.isArray(replies)) walk(replies);
+      }
+    }
+    walk(commentTree);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Fetch metadata (title, description, subscriber count) for a subreddit.
+ * Used by Discover to enrich the ranked list.
+ */
+export async function fetchSubredditInfo(name: string): Promise<SubredditInfo | null> {
+  const clean = name.replace(/^r\//, '').trim();
+  const res = await fetchWithRetry(`https://www.reddit.com/r/${clean}/about.json`);
+  if (!res || !res.ok) return null;
+  try {
+    const data = await res.json();
+    const d = data?.data;
+    if (!d) return null;
+    return {
+      name: clean,
+      title: d.title || '',
+      description: (d.public_description || d.description || '').substring(0, 500),
+      subscribers: d.subscribers || 0,
+      active_users: d.active_user_count || 0,
+    };
+  } catch {
+    return null;
   }
 }

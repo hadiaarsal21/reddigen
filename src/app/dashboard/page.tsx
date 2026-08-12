@@ -1,6 +1,8 @@
 'use client';
 
 import { useState } from 'react';
+import { DashboardShell } from '@/components/DashboardShell';
+import { Icon } from '@/components/Icon';
 
 interface ScoredPost {
   id: string;
@@ -35,7 +37,6 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [posts, setPosts] = useState<ScoredPost[]>([]);
   const [error, setError] = useState('');
-  const [stage, setStage] = useState('');
 
   async function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +44,6 @@ export default function DashboardPage() {
     setLoading(true);
     setError('');
     setPosts([]);
-    setStage('Fetching Reddit posts…');
     try {
       const res = await fetch('/api/search', {
         method: 'POST',
@@ -57,15 +57,12 @@ export default function DashboardPage() {
       const data = await res.json();
       setPosts(data.posts || []);
       if ((data.posts || []).length === 0) {
-        setError(
-          'No high-intent leads matched. Try a different query, or widen the time window to "month".',
-        );
+        setError('No high-intent leads matched. Try a different query, or widen the time window.');
       }
     } catch (err: any) {
       setError(err.message || 'Search failed');
     } finally {
       setLoading(false);
-      setStage('');
     }
   }
 
@@ -99,133 +96,113 @@ export default function DashboardPage() {
   }
 
   return (
-    <div>
-      <h1 className="rg-h1">Dashboard</h1>
-      <p className="rg-lede">
-        Type what you sell. The pipeline retrieves Reddit posts, classifies intent,
-        ranks relevance, analyses sentiment + urgency + role, and drafts a reply —
-        all locally on your machine.
+    <DashboardShell activeHref="/dashboard" crumb="Search">
+      <h1 className="page-title">Search</h1>
+      <p className="page-subtitle">
+        Type what you sell. The pipeline retrieves Reddit posts and runs them through
+        five trained models — intent, relevance, role, sentiment + urgency, and reply
+        generation — locally on your machine.
       </p>
 
-      <form onSubmit={handleSearch} className="rg-card" style={{ marginBottom: 32 }}>
+      <form onSubmit={handleSearch} className="card" style={{ marginBottom: 24 }}>
+        <label className="label">What are you looking for?</label>
         <input
           type="text"
-          className="rg-input"
+          className="input"
           placeholder="e.g. python freelancer for automation"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           maxLength={200}
-          style={{ marginBottom: 12 }}
         />
-        <div className="rg-row">
-          <label style={{ fontSize: 12, color: 'var(--rg-ink-mute)' }}>
-            Reply tone{' '}
-            <select
-              className="rg-select"
-              value={tone}
-              onChange={(e) => setTone(e.target.value)}
-              style={{ marginLeft: 4 }}
-            >
+        <div className="form-row" style={{ marginTop: 12 }}>
+          <div className="field">
+            <label className="label">Reply tone</label>
+            <select className="select" value={tone} onChange={(e) => setTone(e.target.value)}>
               {TONES.map((t) => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
             </select>
-          </label>
-          <label style={{ fontSize: 12, color: 'var(--rg-ink-mute)' }}>
-            Time window{' '}
-            <select
-              className="rg-select"
-              value={time}
-              onChange={(e) => setTime(e.target.value)}
-              style={{ marginLeft: 4 }}
-            >
+          </div>
+          <div className="field">
+            <label className="label">Time window</label>
+            <select className="select" value={time} onChange={(e) => setTime(e.target.value)}>
               <option value="day">Past day</option>
               <option value="week">Past week</option>
               <option value="month">Past month</option>
               <option value="year">Past year</option>
             </select>
-          </label>
+          </div>
           <button
             type="submit"
-            className="rg-btn"
+            className="btn btn-primary"
             disabled={loading || query.trim().length < 3}
             style={{ marginLeft: 'auto' }}
           >
-            {loading && <span className="rg-loading" />}
+            {loading && <span className="spinner" />}
             {loading ? 'Running pipeline…' : 'Run search'}
           </button>
         </div>
-        {stage && (
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--rg-ink-mute)', fontFamily: 'JetBrains Mono, monospace' }}>
-            {stage}
-          </div>
-        )}
       </form>
 
       {error && (
-        <div className="rg-card" style={{ borderColor: 'rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)' }}>
-          <p style={{ margin: 0, color: 'var(--rg-bad)' }}>{error}</p>
+        <div
+          className="card"
+          style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}
+        >
+          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
         </div>
       )}
 
       {posts.length > 0 && (
         <>
-          <h2 className="rg-h2">{posts.length} scored {posts.length === 1 ? 'lead' : 'leads'}</h2>
-          {posts.map((p) => <LeadCard key={p.id} p={p} onSave={saveLead} />)}
+          <h2 style={{ fontSize: 16, margin: '24px 0 12px' }}>
+            {posts.length} scored {posts.length === 1 ? 'lead' : 'leads'}
+          </h2>
+          {posts.map((p) => (
+            <LeadCard key={p.id} p={p} onSave={saveLead} />
+          ))}
         </>
       )}
-    </div>
+    </DashboardShell>
   );
 }
 
 function LeadCard({ p, onSave }: { p: ScoredPost; onSave: (p: ScoredPost) => void }) {
   const relPct = Math.round(p.relevance * 100);
-  const relTone: string = relPct >= 70 ? 'g' : relPct >= 40 ? 'w' : 'r';
-  const urgTone: string = p.urgency === 'high' ? 'r' : p.urgency === 'medium' ? 'w' : '';
-  const sentTone: string = p.sentiment === 'positive' ? 'g' : p.sentiment === 'negative' ? 'r' : '';
+  const relKind = relPct >= 70 ? 'hot' : relPct >= 40 ? 'warm' : 'cold';
+  const urgKind = p.urgency === 'high' ? 'hot' : p.urgency === 'medium' ? 'warm' : 'cold';
+  const sentKind = p.sentiment === 'positive' ? 'success' : p.sentiment === 'negative' ? 'danger' : 'neutral';
   return (
-    <div className="rg-lead">
-      <div className="rg-lead-head">
-        <div>
-          <a href={p.permalink} target="_blank" rel="noreferrer" className="rg-lead-title">
+    <div className="lead">
+      <div className="lead-head">
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <a href={p.permalink} target="_blank" rel="noreferrer" className="lead-title">
             {p.title}
           </a>
-          <div className="rg-lead-meta">
+          <div className="lead-meta">
             r/{p.subreddit} · u/{p.author} · {p.score} pts · {p.num_comments} comments
           </div>
         </div>
       </div>
       {p.selftext && (
-        <div className="rg-lead-body">
-          {p.selftext.slice(0, 300)}
-          {p.selftext.length > 300 ? '…' : ''}
+        <div className="lead-body">
+          {p.selftext.slice(0, 300)}{p.selftext.length > 300 ? '…' : ''}
         </div>
       )}
-      <div className="rg-lead-scores">
-        <span className={`rg-score-pill rg-tag ${relTone}`}>relevance {relPct}%</span>
-        <span className="rg-score-pill rg-tag">intent: {p.intent}</span>
-        {p.sentiment && (
-          <span className={`rg-score-pill rg-tag ${sentTone}`}>sentiment: {p.sentiment}</span>
-        )}
-        {p.urgency && (
-          <span className={`rg-score-pill rg-tag ${urgTone}`}>urgency: {p.urgency}</span>
-        )}
-        <span className="rg-score-pill rg-tag">role: {p.role}</span>
+      <div className="lead-pills">
+        <span className={`pill ${relKind}`}>relevance {relPct}%</span>
+        <span className="pill brand">intent: {p.intent.replace('_', ' ')}</span>
+        {p.sentiment && <span className={`pill ${sentKind}`}>sentiment: {p.sentiment}</span>}
+        {p.urgency && <span className={`pill ${urgKind}`}>urgency: {p.urgency}</span>}
+        <span className="pill purple">role: {p.role}</span>
       </div>
-      {p.reply && (
-        <>
-          <div style={{ fontSize: 12, color: 'var(--rg-ink-mute)', margin: '4px 0 6px' }}>
-            Draft reply
-          </div>
-          <div className="rg-reply">{p.reply}</div>
-        </>
-      )}
-      <div className="rg-lead-actions" style={{ marginTop: 12 }}>
-        <button className="rg-btn-ghost" onClick={() => onSave(p)} disabled={p.saved}>
-          {p.saved ? '✓ Saved' : 'Save to leads'}
+      {p.reply && <div className="reply-box">{p.reply}</div>}
+      <div className="lead-actions">
+        <button className="btn btn-ghost" onClick={() => onSave(p)} disabled={p.saved}>
+          {p.saved ? (<><Icon name="check" size={13} /> Saved</>) : 'Save to leads'}
         </button>
-        <a className="rg-btn-ghost" href={p.permalink} target="_blank" rel="noreferrer">
-          Open on Reddit ↗
+        <a className="btn btn-ghost" href={p.permalink} target="_blank" rel="noreferrer">
+          Open on Reddit <Icon name="external" size={12} />
         </a>
       </div>
     </div>
