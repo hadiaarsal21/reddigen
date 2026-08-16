@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -152,6 +153,11 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
     weights = weights.to(device)
 
+    # 10% warmup expressed in steps: transformers 5.x dropped warmup_ratio,
+    # while warmup_steps exists in both 4.x and 5.x.
+    steps_per_epoch = max(1, math.ceil(len(ds["train"]) / args.batch_size))
+    warmup_steps = int(0.1 * steps_per_epoch * args.epochs)
+
     training_args = TrainingArguments(
         output_dir=args.out,
         num_train_epochs=args.epochs,
@@ -159,7 +165,7 @@ def main():
         per_device_eval_batch_size=args.batch_size,
         learning_rate=args.lr,
         weight_decay=0.01,
-        warmup_ratio=0.1,
+        warmup_steps=warmup_steps,
         eval_strategy="epoch",
         save_strategy="epoch",
         save_total_limit=1,
