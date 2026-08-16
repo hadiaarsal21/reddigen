@@ -2,7 +2,12 @@
 
 import { useState } from 'react';
 import { DashboardShell } from '@/components/DashboardShell';
+import { ChipSelect } from '@/components/ChipSelect';
+import { SearchPanel } from '@/components/SearchPanel';
+import { QuotaNote } from '@/components/QuotaNote';
 import { Icon } from '@/components/Icon';
+import { DEFAULT_POST_LIMIT } from '@/lib/limits';
+import { buildLimitOptions, TIME_OPTIONS, TONE_OPTIONS } from '@/lib/options';
 
 interface ScoredPost {
   id: string;
@@ -23,23 +28,26 @@ interface ScoredPost {
   saved?: boolean;
 }
 
-const TONES = [
-  { id: 'helpful', label: 'Helpful' },
-  { id: 'professional', label: 'Professional' },
-  { id: 'casual', label: 'Casual' },
-  { id: 'empathetic', label: 'Empathetic' },
+const LIMIT_OPTIONS = buildLimitOptions('posts');
+
+const EXAMPLES = [
+  'looking for a python expert',
+  'struggling with SEO',
+  'need a copywriter',
+  'best Notion template',
 ];
 
 export default function DashboardPage() {
   const [query, setQuery] = useState('');
   const [tone, setTone] = useState('helpful');
   const [time, setTime] = useState('week');
+  const [limit, setLimit] = useState(String(DEFAULT_POST_LIMIT));
   const [loading, setLoading] = useState(false);
   const [posts, setPosts] = useState<ScoredPost[]>([]);
   const [error, setError] = useState('');
+  const [quota, setQuota] = useState<{ remaining: number; limit: number } | null>(null);
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleSearch() {
     if (query.trim().length < 3) return;
     setLoading(true);
     setError('');
@@ -48,14 +56,19 @@ export default function DashboardPage() {
       const res = await fetch('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: query.trim(), tone, time }),
+        body: JSON.stringify({
+          query: query.trim(),
+          tone,
+          time,
+          limit: Number(limit),
+        }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Search failed (${res.status})`);
+        throw new Error(data.error || `Search failed (${res.status})`);
       }
-      const data = await res.json();
       setPosts(data.posts || []);
+      if (data.quota) setQuota(data.quota);
       if ((data.posts || []).length === 0) {
         setError('No high-intent leads matched. Try a different query, or widen the time window.');
       }
@@ -104,52 +117,70 @@ export default function DashboardPage() {
         generation — locally on your machine.
       </p>
 
-      <form onSubmit={handleSearch} className="card" style={{ marginBottom: 24 }}>
-        <label className="label">What are you looking for?</label>
-        <input
-          type="text"
-          className="input"
-          placeholder="e.g. python freelancer for automation"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          maxLength={200}
-        />
-        <div className="form-row" style={{ marginTop: 12 }}>
-          <div className="field">
-            <label className="label">Reply tone</label>
-            <select className="select" value={tone} onChange={(e) => setTone(e.target.value)}>
-              {TONES.map((t) => (
-                <option key={t.id} value={t.id}>{t.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="field">
-            <label className="label">Time window</label>
-            <select className="select" value={time} onChange={(e) => setTime(e.target.value)}>
-              <option value="day">Past day</option>
-              <option value="week">Past week</option>
-              <option value="month">Past month</option>
-              <option value="year">Past year</option>
-            </select>
-          </div>
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={loading || query.trim().length < 3}
-            style={{ marginLeft: 'auto' }}
-          >
-            {loading && <span className="spinner" />}
-            {loading ? 'Running pipeline…' : 'Run search'}
-          </button>
-        </div>
-      </form>
+      <SearchPanel
+        title="Find your next lead"
+        subtitle="Describe what you're looking for — natural language works. The AI figures out the intent."
+        placeholder="e.g. looking for a python expert…"
+        value={query}
+        onChange={setQuery}
+        onSubmit={handleSearch}
+        loading={loading}
+        loadingLabel="Running pipeline…"
+        submitLabel="Run Search"
+        examples={EXAMPLES}
+        filters={
+          <>
+            <ChipSelect
+              icon="calendar"
+              options={TIME_OPTIONS}
+              value={time}
+              onChange={setTime}
+              ariaLabel="Time window"
+            />
+            <ChipSelect
+              icon="target"
+              options={LIMIT_OPTIONS}
+              value={limit}
+              onChange={setLimit}
+              ariaLabel="Posts to scan"
+            />
+            <ChipSelect
+              icon="message"
+              options={TONE_OPTIONS}
+              value={tone}
+              onChange={setTone}
+              ariaLabel="Reply tone"
+            />
+            <ChipSelect
+              icon="sliders"
+              options={[]}
+              value=""
+              onChange={() => {}}
+              label="Advanced"
+              muted
+              disabled
+              ariaLabel="Advanced options (coming soon)"
+            />
+          </>
+        }
+        hint={
+          <QuotaNote
+            quota={quota}
+            unit="searches"
+            note="Higher post counts scan more of Reddit but take longer."
+          />
+        }
+      />
 
       {error && (
         <div
           className="card"
           style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}
         >
-          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+          <p style={{ color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="alert" size={15} />
+            {error}
+          </p>
         </div>
       )}
 

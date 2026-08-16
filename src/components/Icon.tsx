@@ -17,7 +17,14 @@ type IconName =
   | 'menu'
   | 'trash'
   | 'refresh'
-  | 'sparkles';
+  | 'sparkles'
+  | 'chevron'
+  | 'calendar'
+  | 'target'
+  | 'message'
+  | 'sliders'
+  | 'arrow-right'
+  | 'alert';
 
 interface Props extends SVGProps<SVGSVGElement> {
   name: IconName;
@@ -132,6 +139,53 @@ export function Icon({ name, size = 16, ...rest }: Props) {
       return (
         <svg {...common}>
           <path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M5.6 18.4l2.8-2.8M15.6 8.4l2.8-2.8" />
+        </svg>
+      );
+    case 'chevron':
+      return (
+        <svg {...common}>
+          <path d="m6 9 6 6 6-6" />
+        </svg>
+      );
+    case 'calendar':
+      return (
+        <svg {...common}>
+          <rect x="3" y="5" width="18" height="16" rx="2" />
+          <path d="M3 10h18M8 3v4M16 3v4" />
+        </svg>
+      );
+    case 'target':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <circle cx="12" cy="12" r="4" />
+          <circle cx="12" cy="12" r="1" fill="currentColor" />
+        </svg>
+      );
+    case 'message':
+      return (
+        <svg {...common}>
+          <path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9 9 0 0 1-3.9-.9L3 21l1.9-5.1A8.4 8.4 0 0 1 4 11.5a8.5 8.5 0 0 1 8.5-8.5A8.4 8.4 0 0 1 21 11.5z" />
+        </svg>
+      );
+    case 'sliders':
+      return (
+        <svg {...common}>
+          <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3" />
+          <path d="M1 14h6M9 8h6M17 16h6" />
+        </svg>
+      );
+    case 'arrow-right':
+      return (
+        <svg {...common}>
+          <path d="M5 12h14M13 6l6 6-6 6" />
+        </svg>
+      );
+    case 'alert':
+      return (
+        <svg {...common}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7v6M12 16v0" />
         </svg>
       );
     default:
