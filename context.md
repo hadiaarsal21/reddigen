@@ -452,8 +452,8 @@ kicks in at ≤ 800px.
 ### First-time setup
 
 ```bash
-git clone https://github.com/projectsbyfarhan1107/reddigen-local.git
-cd reddigen-local
+git clone https://github.com/hadiaarsal21/reddigen.git
+cd reddigen
 
 # Node side
 cp .env.example .env
