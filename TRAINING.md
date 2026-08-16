@@ -95,16 +95,45 @@ training script reads it as-is.
 3. Open the sidebar (**⋮ → Settings**) and set:
    - **Accelerator → GPU T4 x2** *(required — without it everything runs on CPU)*
    - **Internet → On** *(required — pip installs and HuggingFace downloads)*
-4. If your GitHub repo is **private**, add a token so the notebook can clone it:
-   **Add-ons → Secrets → Add secret**, name it exactly `GITHUB_TOKEN`, and paste
-   a fine-grained PAT with *Contents: Read*. Skip this if the repo is public.
-5. Edit the `GITHUB_USER` variable in cell 2 if you forked the repo.
-6. **Run All**, then leave it — roughly an hour.
-7. When it finishes, download **`reddigen-models.zip`** from the **Output** panel.
+4. Give the notebook access to the code — pick **one** route (see below)
+5. **Run All**, then leave it — roughly an hour
+6. When it finishes, download **`reddigen-models.zip`** from the **Output** panel
 
 Kaggle disconnects idle browser sessions. For a long run use
 **Save Version → Save & Run All (Commit)**, which executes headless and keeps the
 output; you can close the tab.
+
+### Getting the code onto Kaggle
+
+Cell 2 tries three routes in order and uses the first that works, so only one
+needs to apply.
+
+| Route | Applies when | Setup |
+|---|---|---|
+| **A** Kaggle Dataset | You uploaded the project as a Dataset | Attach it; auto-detected under `/kaggle/input/` |
+| **B** Public clone | Repo visibility is Public | None |
+| **C** Token clone | Repo is Private | Add a `GITHUB_TOKEN` secret |
+
+**Route B — simplest.** On GitHub: repo → Settings → General → Danger Zone →
+*Change visibility* → Public. Nothing else to configure.
+
+**Route C — keeps the repo private.**
+
+1. GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained**
+2. Repository access → *Only select repositories* → `hadiaarsal21/reddigen`
+3. Permissions → Repository permissions → **Contents: Read-only**
+4. Generate and copy the token
+5. In the Kaggle notebook: **Add-ons → Secrets → Add secret**, name it exactly
+   `GITHUB_TOKEN`, paste the token, and make sure it is attached to the notebook
+
+**Route A — no GitHub at all.** Zip the project folder (excluding `node_modules`,
+`.venv` and `.next`), then Kaggle → **Datasets → New Dataset** → upload the zip.
+In the notebook sidebar, **Add Input** → your dataset. Cell 2 finds it whether
+the zip has the files at the top level or nested inside a folder, and copies
+them into the writable working directory first (Kaggle mounts inputs read-only).
+
+If all three fail, the cell stops immediately with a message naming the fix
+rather than failing later in a confusing place.
 
 ### What the notebook does
 
