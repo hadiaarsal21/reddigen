@@ -2,7 +2,12 @@
 
 import { useState } from 'react';
 import { DashboardShell } from '@/components/DashboardShell';
+import { ChipSelect } from '@/components/ChipSelect';
+import { SearchPanel } from '@/components/SearchPanel';
+import { QuotaNote } from '@/components/QuotaNote';
 import { Icon } from '@/components/Icon';
+import { DEFAULT_POST_LIMIT } from '@/lib/limits';
+import { buildLimitOptions } from '@/lib/options';
 
 interface DiscoveredSub {
   name: string;
@@ -17,15 +22,25 @@ interface DiscoveredSub {
   url: string;
 }
 
+const LIMIT_OPTIONS = buildLimitOptions('posts');
+
+const EXAMPLES = [
+  'cold email deliverability tool',
+  'AI video editing app',
+  'bookkeeping for freelancers',
+  'indie game marketing',
+];
+
 export default function DiscoverPage() {
   const [product, setProduct] = useState('');
+  const [limit, setLimit] = useState(String(DEFAULT_POST_LIMIT));
   const [loading, setLoading] = useState(false);
   const [subs, setSubs] = useState<DiscoveredSub[]>([]);
   const [error, setError] = useState('');
   const [stats, setStats] = useState<{ posts_examined: number; subreddits_found: number } | null>(null);
+  const [quota, setQuota] = useState<{ remaining: number; limit: number } | null>(null);
 
-  async function handleDiscover(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleDiscover() {
     if (product.trim().length < 3) return;
     setLoading(true);
     setError('');
@@ -35,15 +50,15 @@ export default function DiscoverPage() {
       const res = await fetch('/api/discover', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product: product.trim() }),
+        body: JSON.stringify({ product: product.trim(), limit: Number(limit) }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Discover failed (${res.status})`);
+        throw new Error(data.error || `Discover failed (${res.status})`);
       }
-      const data = await res.json();
       setSubs(data.subreddits || []);
       setStats(data.stats || null);
+      if (data.quota) setQuota(data.quota);
       if ((data.subreddits || []).length === 0) {
         setError('No relevant subreddits found. Try a more specific product description.');
       }
@@ -67,37 +82,53 @@ export default function DiscoverPage() {
         activity-count boost so busy niche communities surface above dead ones.
       </p>
 
-      <form onSubmit={handleDiscover} className="card" style={{ marginBottom: 24 }}>
-        <label className="label">What do you sell?</label>
-        <input
-          type="text"
-          className="input"
-          placeholder="e.g. cold email deliverability tool"
-          value={product}
-          onChange={(e) => setProduct(e.target.value)}
-          maxLength={200}
-        />
-        <div className="form-row" style={{ marginTop: 12 }}>
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={loading || product.trim().length < 3}
-            style={{ marginLeft: 'auto' }}
-          >
-            {loading && <span className="spinner" />}
-            {loading ? 'Discovering…' : 'Find subreddits'}
-          </button>
-        </div>
-        <div className="hint" style={{ marginTop: 10 }}>
-          Reddit&apos;s search API returns ~100 posts; we group by subreddit,
-          fetch each community&apos;s description, embed with Sentence-BERT, and
-          rank by cosine similarity + activity. Typically 20–40 seconds.
-        </div>
-      </form>
+      <SearchPanel
+        title="Find the right communities"
+        subtitle="Describe your offer. Sentence-BERT ranks each subreddit's description against it, weighted by activity."
+        placeholder="e.g. cold email deliverability tool…"
+        value={product}
+        onChange={setProduct}
+        onSubmit={handleDiscover}
+        loading={loading}
+        loadingLabel="Discovering…"
+        submitLabel="Find Subreddits"
+        examples={EXAMPLES}
+        filters={
+          <>
+            <ChipSelect
+              icon="compass"
+              options={LIMIT_OPTIONS}
+              value={limit}
+              onChange={setLimit}
+              ariaLabel="Posts to sample"
+            />
+            <ChipSelect
+              icon="sliders"
+              options={[]}
+              value=""
+              onChange={() => {}}
+              label="Advanced"
+              muted
+              disabled
+              ariaLabel="Advanced options (coming soon)"
+            />
+          </>
+        }
+        hint={
+          <QuotaNote
+            quota={quota}
+            unit="discovery runs"
+            note="Groups posts by subreddit, then embeds each description. Typically 20–40 seconds."
+          />
+        }
+      />
 
       {error && (
         <div className="card" style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}>
-          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+          <p style={{ color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="alert" size={15} />
+            {error}
+          </p>
         </div>
       )}
 

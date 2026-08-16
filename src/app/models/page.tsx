@@ -51,7 +51,7 @@ export default function ModelsPage() {
         the new checkpoint automatically on the next request — no restart needed.
       </p>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 300px), 1fr))', gap: 16 }}>
         {MODELS.map((m) => (
           <div key={m.title} className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
@@ -63,7 +63,7 @@ export default function ModelsPage() {
               style={{
                 fontSize: 12,
                 color: 'var(--brand-primary)',
-                fontFamily: 'JetBrains Mono, monospace',
+                fontFamily: 'var(--font-mono), JetBrains Mono, monospace',
                 margin: '4px 0 10px',
               }}
             >
@@ -77,7 +77,7 @@ export default function ModelsPage() {
                 background: 'var(--bg-surface-alt)',
                 borderRadius: 6,
                 fontSize: 12,
-                fontFamily: 'JetBrains Mono, monospace',
+                fontFamily: 'var(--font-mono), JetBrains Mono, monospace',
                 color: 'var(--text-primary)',
               }}
             >
@@ -94,7 +94,7 @@ export default function ModelsPage() {
         <pre
           style={{
             margin: 0,
-            fontFamily: 'JetBrains Mono, monospace',
+            fontFamily: 'var(--font-mono), JetBrains Mono, monospace',
             fontSize: 12.5,
             color: 'var(--text-secondary)',
             lineHeight: 1.85,

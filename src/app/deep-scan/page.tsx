@@ -2,7 +2,11 @@
 
 import { useState } from 'react';
 import { DashboardShell } from '@/components/DashboardShell';
+import { ChipSelect } from '@/components/ChipSelect';
+import { SearchPanel } from '@/components/SearchPanel';
+import { QuotaNote } from '@/components/QuotaNote';
 import { Icon } from '@/components/Icon';
+import { buildLimitOptions, TONE_OPTIONS } from '@/lib/options';
 
 interface CommentLead {
   id: string;
@@ -30,23 +34,28 @@ interface Stats {
   advisors_filtered: number;
 }
 
-const TONES = [
-  { id: 'helpful', label: 'Helpful' },
-  { id: 'professional', label: 'Professional' },
-  { id: 'casual', label: 'Casual' },
-  { id: 'empathetic', label: 'Empathetic' },
+// Deep Scan is the heaviest feature — every post costs a comment-thread
+// fetch — so it offers a shorter ladder than Search.
+const SCAN_LIMIT_OPTIONS = buildLimitOptions('threads', 25);
+
+const EXAMPLES = [
+  'SEO agency for SaaS startups',
+  'freelance video editor',
+  'shopify store setup',
+  'logo design service',
 ];
 
 export default function DeepScanPage() {
   const [product, setProduct] = useState('');
   const [tone, setTone] = useState('helpful');
+  const [limit, setLimit] = useState('10');
   const [loading, setLoading] = useState(false);
   const [leads, setLeads] = useState<CommentLead[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [error, setError] = useState('');
+  const [quota, setQuota] = useState<{ remaining: number; limit: number } | null>(null);
 
-  async function handleScan(e: React.FormEvent) {
-    e.preventDefault();
+  async function handleScan() {
     if (product.trim().length < 3) return;
     setLoading(true);
     setError('');
@@ -56,15 +65,15 @@ export default function DeepScanPage() {
       const res = await fetch('/api/deep-scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product: product.trim(), tone }),
+        body: JSON.stringify({ product: product.trim(), tone, limit: Number(limit) }),
       });
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Scan failed (${res.status})`);
+        throw new Error(data.error || `Scan failed (${res.status})`);
       }
-      const data = await res.json();
       setLeads(data.leads || []);
       setStats(data.stats || null);
+      if (data.quota) setQuota(data.quota);
       if ((data.leads || []).length === 0) {
         setError(
           'No buyer comments found. Try a broader product description, or wait — buyer replies accumulate over time.',
@@ -120,45 +129,60 @@ export default function DeepScanPage() {
         distinguishes buyers from sellers pitching and advisors dispensing opinions.
       </p>
 
-      <form onSubmit={handleScan} className="card" style={{ marginBottom: 24 }}>
-        <label className="label">Describe what you sell</label>
-        <input
-          type="text"
-          className="input"
-          placeholder="e.g. SEO agency for SaaS startups"
-          value={product}
-          onChange={(e) => setProduct(e.target.value)}
-          maxLength={200}
-        />
-        <div className="form-row" style={{ marginTop: 12 }}>
-          <div className="field" style={{ maxWidth: 200 }}>
-            <label className="label">Reply tone</label>
-            <select className="select" value={tone} onChange={(e) => setTone(e.target.value)}>
-              {TONES.map((t) => (
-                <option key={t.id} value={t.id}>{t.label}</option>
-              ))}
-            </select>
-          </div>
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={loading || product.trim().length < 3}
-            style={{ marginLeft: 'auto' }}
-          >
-            {loading && <span className="spinner" />}
-            {loading ? 'Mining comments…' : 'Run Deep Scan'}
-          </button>
-        </div>
-        <div className="hint" style={{ marginTop: 10 }}>
-          Deep Scan searches for hiring / recommendation posts, fetches their
-          comment threads, and role-classifies every reply. Typically finishes
-          in 30–90 seconds.
-        </div>
-      </form>
+      <SearchPanel
+        title="Mine comment threads for buyers"
+        subtitle="Describe what you sell. Deep Scan reads replies under other people's posts and keeps only the buyers."
+        placeholder="e.g. SEO agency for SaaS startups…"
+        value={product}
+        onChange={setProduct}
+        onSubmit={handleScan}
+        loading={loading}
+        loadingLabel="Mining comments…"
+        submitLabel="Run Deep Scan"
+        examples={EXAMPLES}
+        filters={
+          <>
+            <ChipSelect
+              icon="layers"
+              options={SCAN_LIMIT_OPTIONS}
+              value={limit}
+              onChange={setLimit}
+              ariaLabel="Threads to scan"
+            />
+            <ChipSelect
+              icon="message"
+              options={TONE_OPTIONS}
+              value={tone}
+              onChange={setTone}
+              ariaLabel="Reply tone"
+            />
+            <ChipSelect
+              icon="sliders"
+              options={[]}
+              value=""
+              onChange={() => {}}
+              label="Advanced"
+              muted
+              disabled
+              ariaLabel="Advanced options (coming soon)"
+            />
+          </>
+        }
+        hint={
+          <QuotaNote
+            quota={quota}
+            unit="deep scans"
+            note="Each thread costs a comment fetch — typically 30–90 seconds."
+          />
+        }
+      />
 
       {error && (
         <div className="card" style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}>
-          <p style={{ color: 'var(--danger)', margin: 0 }}>{error}</p>
+          <p style={{ color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="alert" size={15} />
+            {error}
+          </p>
         </div>
       )}
 

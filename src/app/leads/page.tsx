@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardShell } from '@/components/DashboardShell';
+import { ChipSelect } from '@/components/ChipSelect';
 import { Icon } from '@/components/Icon';
 
 interface Lead {
@@ -31,10 +32,18 @@ const TABS = [
   { id: 'replied', label: 'Replied' },
 ];
 
+const SORT_OPTIONS = [
+  { value: 'recent', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'relevance', label: 'Best match' },
+];
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('all');
+  const [filter, setFilter] = useState('');
+  const [sort, setSort] = useState('recent');
 
   useEffect(() => {
     fetch('/api/leads')
@@ -60,8 +69,20 @@ export default function LeadsPage() {
     await fetch(`/api/leads?id=${id}`, { method: 'DELETE' });
   }
 
-  const filtered =
-    tab === 'all' ? leads : leads.filter((l) => l.status === tab);
+  const q = filter.trim().toLowerCase();
+  const filtered = leads
+    .filter((l) => (tab === 'all' ? true : l.status === tab))
+    .filter((l) =>
+      q
+        ? `${l.title} ${l.subreddit} ${l.author} ${l.keyword}`.toLowerCase().includes(q)
+        : true,
+    )
+    .sort((a, b) => {
+      if (sort === 'relevance') return b.relevanceScore - a.relevanceScore;
+      const ta = Date.parse(a.createdAt) || 0;
+      const tb = Date.parse(b.createdAt) || 0;
+      return sort === 'oldest' ? ta - tb : tb - ta;
+    });
 
   return (
     <DashboardShell activeHref="/leads" crumb="Leads">
@@ -71,25 +92,35 @@ export default function LeadsPage() {
         SQLite database — <code>prisma/dev.db</code>.
       </p>
 
-      <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border-subtle)' }}>
+      <div className="toolbar">
+        <div className="toolbar-search">
+          <Icon name="search" size={16} className="search-field-icon" />
+          <input
+            type="text"
+            placeholder="Filter saved leads by title, subreddit or author…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter leads"
+          />
+        </div>
+        <ChipSelect
+          icon="sliders"
+          options={SORT_OPTIONS}
+          value={sort}
+          onChange={setSort}
+          ariaLabel="Sort leads"
+        />
+      </div>
+
+      <div className="tabs">
         {TABS.map((t) => (
           <button
             key={t.id}
+            className={`tab ${tab === t.id ? 'active' : ''}`}
             onClick={() => setTab(t.id)}
-            style={{
-              padding: '10px 16px',
-              fontSize: 13,
-              fontWeight: 600,
-              background: 'transparent',
-              border: 'none',
-              borderBottom: `2px solid ${tab === t.id ? 'var(--brand-primary)' : 'transparent'}`,
-              color: tab === t.id ? 'var(--brand-primary)' : 'var(--text-secondary)',
-              cursor: 'pointer',
-              marginBottom: -1,
-            }}
           >
             {t.label}{' '}
-            <span style={{ color: 'var(--text-tertiary)', fontWeight: 500 }}>
+            <span className="tab-count">
               {t.id === 'all' ? leads.length : leads.filter((l) => l.status === t.id).length}
             </span>
           </button>
@@ -100,10 +131,28 @@ export default function LeadsPage() {
 
       {!loading && filtered.length === 0 && (
         <div className="empty">
-          <p>No leads yet.</p>
-          <Link href="/dashboard" className="btn btn-primary" style={{ marginTop: 16 }}>
-            <Icon name="search" size={14} /> Run your first search
-          </Link>
+          {leads.length === 0 ? (
+            <>
+              <p>No leads yet.</p>
+              <Link href="/dashboard" className="btn btn-primary" style={{ marginTop: 16 }}>
+                <Icon name="search" size={14} /> Run your first search
+              </Link>
+            </>
+          ) : (
+            <>
+              <p>No leads match this filter.</p>
+              <button
+                className="btn btn-ghost"
+                style={{ marginTop: 12 }}
+                onClick={() => {
+                  setFilter('');
+                  setTab('all');
+                }}
+              >
+                Clear filters
+              </button>
+            </>
+          )}
         </div>
       )}
 
