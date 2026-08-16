@@ -13,24 +13,45 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { searchReddit, fetchSubredditInfo } from '@/lib/reddit';
+import {
+  clampPostLimit,
+  clientKey,
+  rateLimit,
+  RATE_RULES,
+  validateQuery,
+} from '@/lib/limits';
 import { scoreRelevance } from '@/lib/mlClient';
 
 export const dynamic = 'force-dynamic';
 
+// Each ranked subreddit costs a metadata fetch plus an embedding call.
 const MAX_SUBREDDITS_TO_RANK = 25;
 const MIN_POSTS_PER_SUBREDDIT = 1;
 
 export async function POST(req: NextRequest) {
+  const rl = rateLimit(clientKey(req, 'discover'), RATE_RULES.discover);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        error: `Rate limit reached — ${rl.limit} discovery runs per minute. Try again in ${rl.retryAfter}s.`,
+        retryAfter: rl.retryAfter,
+      },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
+
   const body = await req.json().catch(() => ({}));
   const product: string = (body.product || body.query || '').toString().trim();
-  if (product.length < 3) {
-    return NextResponse.json({ error: 'Query too short' }, { status: 400 });
-  }
+
+  const invalid = validateQuery(product);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
+
+  const perSort = clampPostLimit(body.limit);
 
   // ── Step 1: broad Reddit search (two sorts to widen coverage) ────────
   const [byNew, byRel] = await Promise.all([
-    searchReddit(product, { sort: 'new', time: 'month', limit: 50 }),
-    searchReddit(product, { sort: 'relevance', time: 'month', limit: 50 }),
+    searchReddit(product, { sort: 'new', time: 'month', limit: perSort }),
+    searchReddit(product, { sort: 'relevance', time: 'month', limit: perSort }),
   ]);
 
   const seen = new Set<string>();
@@ -44,6 +65,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       subreddits: [],
       stats: { posts_examined: 0, subreddits_found: 0 },
+      quota: { remaining: rl.remaining, limit: rl.limit },
     });
   }
 
@@ -103,5 +125,6 @@ export async function POST(req: NextRequest) {
       posts_examined: posts.length,
       subreddits_found: scored.length,
     },
+    quota: { remaining: rl.remaining, limit: rl.limit },
   });
 }
