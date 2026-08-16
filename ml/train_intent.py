@@ -23,11 +23,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 from datasets import Dataset
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mlflow_utils  # noqa: E402
 from sklearn.metrics import f1_score, precision_recall_fscore_support
 from transformers import (
     AutoModelForSequenceClassification,
@@ -45,7 +49,7 @@ ID2LABEL = {i: l for l, i in LABEL2ID.items()}
 
 def load_jsonl(path: Path):
     rows = []
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -81,6 +85,8 @@ def main():
 
     rows = load_jsonl(data_path)
     print(f"[train_intent] Loaded {len(rows)} labelled examples")
+
+    mlflow_utils.init("reddigen-intent")
 
     tok = AutoTokenizer.from_pretrained(BASE_MODEL)
     ds = Dataset.from_list([
@@ -118,26 +124,49 @@ def main():
         metric_for_best_model="macro_f1",
         greater_is_better=True,
         logging_steps=10,
-        report_to="none",
+        report_to=mlflow_utils.report_to(),
     )
 
-    trainer = Trainer(
-        model=model,
-        args=training_args,
-        train_dataset=ds["train"],
-        eval_dataset=ds["test"],
-        tokenizer=tok,
-        data_collator=collator,
-        compute_metrics=compute_metrics,
-    )
+    params = {
+        "base_model": BASE_MODEL,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "max_len": args.max_len,
+        "num_labels": len(LABELS),
+        "device": device,
+    }
 
-    trainer.train()
-    metrics = trainer.evaluate()
-    print(f"[train_intent] Final metrics: {metrics}")
+    with mlflow_utils.run(f"intent-{BASE_MODEL}", params):
+        mlflow_utils.log_dataset(rows, label_key="label")
 
-    trainer.save_model(args.out)
-    tok.save_pretrained(args.out)
-    print(f"[train_intent] Saved to {args.out}")
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=ds["train"],
+            eval_dataset=ds["test"],
+            processing_class=tok,
+            data_collator=collator,
+            compute_metrics=compute_metrics,
+        )
+
+        trainer.train()
+        metrics = trainer.evaluate()
+        print(f"[train_intent] Final metrics: {metrics}")
+
+        trainer.save_model(args.out)
+        tok.save_pretrained(args.out)
+        print(f"[train_intent] Saved to {args.out}")
+
+        if mlflow_utils.MLFLOW_AVAILABLE:
+            import mlflow
+
+            mlflow.log_metrics({
+                f"final.{k.replace('eval_', '')}": v
+                for k, v in metrics.items()
+                if isinstance(v, (int, float))
+            })
+        mlflow_utils.log_checkpoint(args.out)
 
 
 if __name__ == "__main__":
