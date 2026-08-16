@@ -14,24 +14,29 @@ pipeline. Everything runs locally — no external API keys required.
 ## What's inside
 
 ```
-reddigen-local/
+reddigen/
 ├── src/                    # Next.js 15 web app (dashboard, leads, models)
 │   ├── app/                # Pages + API routes
-│   ├── components/         # Nav
-│   └── lib/                # DB, Reddit fetch, ML client
+│   ├── components/         # Nav, search panel, chip filters
+│   └── lib/                # DB, Reddit fetch, ML client, request limits
 ├── ml/                     # Python ML layer
 │   ├── server.py           # FastAPI inference server (all 5 models)
+│   ├── mlflow_utils.py     # Experiment tracking shared by every script
+│   ├── import_models.py    # Unpack trained checkpoints from Kaggle
 │   ├── train_intent.py     # DistilBERT — intent classifier
 │   ├── train_relevance.py  # Sentence-BERT — relevance ranker
 │   ├── train_role.py       # RoBERTa — buyer/seller/advisor
 │   ├── train_sentiment.py  # RoBERTa multi-task — sentiment + urgency
 │   ├── train_reply.py      # FLAN-T5 + LoRA — reply generator
-│   ├── data/               # Sample labelled JSONL for each task
+│   ├── data/               # Labelled JSONL + generate_dataset.py
 │   ├── models/             # Trained checkpoints go here (gitignored)
 │   └── requirements.txt
+├── notebooks/
+│   └── reddigen_kaggle_training.ipynb   # GPU training on Kaggle
 ├── prisma/
 │   └── schema.prisma       # SQLite schema for the Leads table
-├── MODELS-GUIDE.md         # Detailed ML architecture + training guide
+├── MODELS-GUIDE.md         # ML architecture — what each model is and why
+├── TRAINING.md             # How to build the data, train, and import models
 └── README.md               # (You are here)
 ```
 
@@ -54,7 +59,7 @@ Open two terminals.
 
 ```bash
 # From the project root
-cd reddigen-local
+cd reddigen
 
 # Install Python deps (creates the FastAPI server + all training deps)
 pip install -r ml/requirements.txt
@@ -90,13 +95,11 @@ leads with drafted replies.
 
 ## Training the models
 
-Sample labelled data ships in `ml/data/*.jsonl` so all five training scripts
-run out of the box. For real evaluation-quality models, expand each file to
-5,000–10,000 rows (see `ml/data/README.md` for schema and public data
-sources).
+Build the datasets, then train:
 
 ```bash
-# Train each model (independently — order doesn't matter)
+python ml/data/generate_dataset.py   # 50,000 rows across the five tasks
+
 python ml/train_intent.py       # ~2-5 min on GPU, ~30 min on CPU
 python ml/train_relevance.py    # ~2-5 min
 python ml/train_role.py         # ~5-10 min
@@ -107,6 +110,23 @@ python ml/train_reply.py        # ~20-40 min (largest model)
 Each script saves to `ml/models/<name>/`. The FastAPI server picks up the
 new checkpoints **without a restart** — the next request to that endpoint
 switches from stub to real inference.
+
+**No GPU?** The two RoBERTa models and the FLAN-T5 reply generator are not
+practical on CPU. `notebooks/reddigen_kaggle_training.ipynb` runs the whole
+pipeline on a free Kaggle T4 in about an hour, then
+`python ml/import_models.py reddigen-models.zip` brings the checkpoints back.
+
+**Experiment tracking.** Every run logs hyperparameters, dataset balance,
+hardware, per-epoch metrics and final evaluation to MLflow:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db   # http://localhost:5000
+```
+
+Note the shipped datasets are **synthetic** — generated from templates rather
+than human-labelled — so held-out scores validate the pipeline rather than
+measuring generalisation to live Reddit. [`TRAINING.md`](TRAINING.md) covers
+this in full, along with the Kaggle setup and troubleshooting.
 
 See [`MODELS-GUIDE.md`](MODELS-GUIDE.md) for architecture details,
 hyperparameters, evaluation methodology, and how each model integrates with

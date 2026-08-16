@@ -154,7 +154,7 @@ export function DashboardShell({ activeHref, crumb, children }: Props) {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <a
-              href="https://github.com/projectsbyfarhan1107/reddigen-local"
+              href="https://github.com/hadiaarsal21/reddigen"
               target="_blank"
               rel="noreferrer"
               className="btn btn-ghost"
