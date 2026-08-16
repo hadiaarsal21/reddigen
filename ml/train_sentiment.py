@@ -22,12 +22,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn as nn
 from datasets import Dataset
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mlflow_utils  # noqa: E402
 from sklearn.metrics import f1_score
 from transformers import (
     AutoConfig,
@@ -135,7 +139,7 @@ def compute_metrics(eval_pred):
 
 
 def load_jsonl(path: Path):
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         return [json.loads(line) for line in f if line.strip()]
 
 
@@ -155,6 +159,8 @@ def main():
 
     rows = load_jsonl(data_path)
     print(f"[train_sentiment] Loaded {len(rows)} rows")
+
+    mlflow_utils.init("reddigen-sentiment-urgency")
 
     tok = AutoTokenizer.from_pretrained(BASE_MODEL)
     ds = Dataset.from_list([
@@ -193,27 +199,57 @@ def main():
         metric_for_best_model="avg_f1",
         greater_is_better=True,
         logging_steps=10,
-        report_to="none",
+        report_to=mlflow_utils.report_to(),
         label_names=["sentiment_labels", "urgency_labels"],
     )
 
-    trainer = MTTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=ds["train"],
-        eval_dataset=ds["test"],
-        tokenizer=tok,
-        data_collator=MTDataCollator(tok),
-        compute_metrics=compute_metrics,
-    )
+    params = {
+        "base_model": BASE_MODEL,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "max_len": args.max_len,
+        "architecture": "shared encoder + 2 classification heads",
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+    }
 
-    trainer.train()
-    metrics = trainer.evaluate()
-    print(f"[train_sentiment] Final metrics: {metrics}")
+    with mlflow_utils.run(f"sentiment-urgency-{BASE_MODEL}", params):
+        mlflow_utils.log_dataset(rows, label_key="sentiment")
+        if mlflow_utils.MLFLOW_AVAILABLE:
+            import mlflow
 
-    trainer.save_model(args.out)
-    tok.save_pretrained(args.out)
-    print(f"[train_sentiment] Saved to {args.out}")
+            from collections import Counter
+
+            for lbl, n in sorted(Counter(r["urgency"] for r in rows if "urgency" in r).items()):
+                mlflow.log_param(f"dataset.urgency.{lbl}", n)
+
+        trainer = MTTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=ds["train"],
+            eval_dataset=ds["test"],
+            processing_class=tok,
+            data_collator=MTDataCollator(tok),
+            compute_metrics=compute_metrics,
+        )
+
+        trainer.train()
+        metrics = trainer.evaluate()
+        print(f"[train_sentiment] Final metrics: {metrics}")
+
+        trainer.save_model(args.out)
+        tok.save_pretrained(args.out)
+        print(f"[train_sentiment] Saved to {args.out}")
+
+        if mlflow_utils.MLFLOW_AVAILABLE:
+            import mlflow
+
+            mlflow.log_metrics({
+                f"final.{k.replace('eval_', '')}": v
+                for k, v in metrics.items()
+                if isinstance(v, (int, float))
+            })
+        mlflow_utils.log_checkpoint(args.out)
 
 
 if __name__ == "__main__":

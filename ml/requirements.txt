@@ -1,6 +1,8 @@
 # Core ML stack
 torch>=2.2.0
-transformers>=4.40.0
+# >=4.46 required: the Trainer API replaced `tokenizer=` with
+# `processing_class=`, which the training scripts use.
+transformers>=4.46.0
 sentence-transformers>=2.7.0
 datasets>=2.18.0
 scikit-learn>=1.4.0
@@ -10,6 +12,9 @@ pandas>=2.2.0
 # Parameter-efficient fine-tuning
 peft>=0.10.0
 accelerate>=0.29.0
+
+# Experiment tracking / model versioning
+mlflow>=2.12.0
 
 # Serving
 fastapi>=0.111.0

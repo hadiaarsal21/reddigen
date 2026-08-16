@@ -27,6 +27,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from datasets import Dataset
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mlflow_utils  # noqa: E402
+
 from sklearn.metrics import classification_report, f1_score
 from transformers import (
     AutoModelForSequenceClassification,
@@ -74,7 +79,7 @@ class WeightedTrainer(Trainer):
 
 def load_jsonl(path: Path):
     rows = []
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -107,6 +112,8 @@ def main():
 
     rows = load_jsonl(data_path)
     print(f"[train_role] Loaded {len(rows)} labelled comments")
+
+    mlflow_utils.init("reddigen-role")
 
     # Compute class weights inversely proportional to frequency so the
     # focal loss can further down-weight the majority class.
@@ -160,32 +167,65 @@ def main():
         metric_for_best_model="buyer_f1",  # optimise for the rare class
         greater_is_better=True,
         logging_steps=10,
-        report_to="none",
+        report_to=mlflow_utils.report_to(),
     )
 
-    trainer = WeightedTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=ds["train"],
-        eval_dataset=ds["test"],
-        tokenizer=tok,
-        data_collator=collator,
-        compute_metrics=compute_metrics,
-        class_weights=weights,
-    )
+    params = {
+        "base_model": BASE_MODEL,
+        "epochs": args.epochs,
+        "batch_size": args.batch_size,
+        "learning_rate": args.lr,
+        "max_len": args.max_len,
+        "loss": "focal(gamma=2.0)+inverse_freq_weights",
+        "device": device,
+    }
 
-    trainer.train()
-    metrics = trainer.evaluate()
-    print(f"[train_role] Final metrics: {metrics}")
+    with mlflow_utils.run(f"role-{BASE_MODEL}", params):
+        mlflow_utils.log_dataset(rows, label_key="label")
 
-    # Detailed per-class report
-    preds = np.argmax(trainer.predict(ds["test"]).predictions, axis=-1)
-    labels = np.array([ex["label"] for ex in ds["test"]])
-    print("\n" + classification_report(labels, preds, target_names=LABELS))
+        trainer = WeightedTrainer(
+            model=model,
+            args=training_args,
+            train_dataset=ds["train"],
+            eval_dataset=ds["test"],
+            processing_class=tok,
+            data_collator=collator,
+            compute_metrics=compute_metrics,
+            class_weights=weights,
+        )
 
-    trainer.save_model(args.out)
-    tok.save_pretrained(args.out)
-    print(f"[train_role] Saved to {args.out}")
+        trainer.train()
+        metrics = trainer.evaluate()
+        print(f"[train_role] Final metrics: {metrics}")
+
+        # Detailed per-class report
+        preds = np.argmax(trainer.predict(ds["test"]).predictions, axis=-1)
+        labels = np.array([ex["label"] for ex in ds["test"]])
+        report = classification_report(labels, preds, target_names=LABELS)
+        print("\n" + report)
+
+        trainer.save_model(args.out)
+        tok.save_pretrained(args.out)
+        print(f"[train_role] Saved to {args.out}")
+
+        if mlflow_utils.MLFLOW_AVAILABLE:
+            import mlflow
+
+            mlflow.log_metrics({
+                f"final.{k.replace('eval_', '')}": v
+                for k, v in metrics.items()
+                if isinstance(v, (int, float))
+            })
+            # per-class precision/recall/F1 for the audit trail
+            detail = classification_report(
+                labels, preds, target_names=LABELS, output_dict=True, zero_division=0
+            )
+            for cls in LABELS:
+                if cls in detail:
+                    for m in ("precision", "recall", "f1-score"):
+                        mlflow.log_metric(f"{cls}.{m.replace('-score', '')}", detail[cls][m])
+            mlflow.log_text(report, "classification_report.txt")
+        mlflow_utils.log_checkpoint(args.out)
 
 
 if __name__ == "__main__":
