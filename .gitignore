@@ -2,6 +2,7 @@
 node_modules/
 .next/
 next-env.d.ts.bak
+tsconfig.tsbuildinfo
 
 # Python
 __pycache__/
@@ -13,10 +14,23 @@ env/
 # Prisma
 prisma/dev.db
 prisma/dev.db-journal
+# DATABASE_URL in .env.example is "file:./prisma/dev.db", which Prisma resolves
+# relative to the schema's own directory — so the file actually lands here.
+prisma/prisma/
 
 # Trained models (large — keep out of git; docs explain how to reproduce)
 ml/models/*
 !ml/models/.gitkeep
+
+# MLflow — local tracking store and artifacts are run output, not source.
+# TRAINING.md explains how to reproduce or open a downloaded mlflow.db.
+mlflow.db
+mlflow.db-journal
+mlruns/
+mlartifacts/
+
+# Model archives exported from Kaggle
+reddigen-models.zip
 
 # Env + local
 .env
