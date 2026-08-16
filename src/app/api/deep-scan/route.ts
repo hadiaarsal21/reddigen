@@ -17,6 +17,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchReddit, fetchComments } from '@/lib/reddit';
 import {
+  clampPostLimit,
+  clientKey,
+  rateLimit,
+  RATE_RULES,
+  validateQuery,
+} from '@/lib/limits';
+import {
   classifyRole,
   predictSentiment,
   generateReply,
@@ -25,9 +32,13 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const MAX_POSTS_TO_SCAN = 10;
 const MAX_COMMENTS_PER_POST = 25;
 const ROLE_CONFIDENCE_THRESHOLD = 0.55;
+
+// Deep Scan fans out: every scanned post costs one comment-thread fetch plus
+// a role classification per comment. Cap the posts hard so one request can't
+// trigger hundreds of upstream calls.
+const DEEP_SCAN_MAX_POSTS = 25;
 
 // Buyer-attracting search variants — same product, different phrasings
 // that tend to attract comments from people who want the service too.
@@ -43,17 +54,31 @@ function buildQueries(product: string): string[] {
 }
 
 export async function POST(req: NextRequest) {
+  const rl = rateLimit(clientKey(req, 'deep-scan'), RATE_RULES['deep-scan']);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        error: `Rate limit reached — ${rl.limit} deep scans per minute. Try again in ${rl.retryAfter}s.`,
+        retryAfter: rl.retryAfter,
+      },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
+
   const body = await req.json().catch(() => ({}));
   const product: string = (body.product || body.query || '').toString().trim();
   const tone: string = (body.tone || 'helpful').toString();
-  if (product.length < 3) {
-    return NextResponse.json({ error: 'Product description too short' }, { status: 400 });
-  }
+
+  const invalid = validateQuery(product);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
+
+  const maxPostsToScan = Math.min(clampPostLimit(body.limit), DEEP_SCAN_MAX_POSTS);
 
   // ── Step 1: search for posts that tend to attract buyer replies ──────
   const queries = buildQueries(product);
+  const perQuery = Math.max(4, Math.ceil(maxPostsToScan / queries.length) * 2);
   const postArrays = await Promise.all(
-    queries.map((q) => searchReddit(q, { sort: 'new', time: 'month', limit: 10 })),
+    queries.map((q) => searchReddit(q, { sort: 'new', time: 'month', limit: perQuery })),
   );
 
   // Flatten + dedupe by post ID, then rank by num_comments (more
@@ -68,12 +93,13 @@ export async function POST(req: NextRequest) {
     }
   }
   posts.sort((a, b) => b.num_comments - a.num_comments);
-  const targetPosts = posts.slice(0, MAX_POSTS_TO_SCAN);
+  const targetPosts = posts.slice(0, maxPostsToScan);
 
   if (targetPosts.length === 0) {
     return NextResponse.json({
       leads: [],
       stats: { posts_scanned: 0, comments_examined: 0, buyers_found: 0 },
+      quota: { remaining: rl.remaining, limit: rl.limit },
     });
   }
 
@@ -148,5 +174,6 @@ export async function POST(req: NextRequest) {
       sellers_filtered: roleResults.filter((r) => r.role === 'seller').length,
       advisors_filtered: roleResults.filter((r) => r.role === 'advisor').length,
     },
+    quota: { remaining: rl.remaining, limit: rl.limit },
   });
 }

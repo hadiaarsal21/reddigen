@@ -7,6 +7,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchReddit } from '@/lib/reddit';
 import {
+  clampPostLimit,
+  clientKey,
+  rateLimit,
+  RATE_RULES,
+  validateQuery,
+} from '@/lib/limits';
+import {
   classifyIntent,
   scoreRelevance,
   predictSentiment,
@@ -16,16 +23,22 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-// Maximum posts to run through the model pipeline. Higher = more coverage
-// but slower and costlier (per forward pass). 40 is a good default that
-// finishes in ~5-8 seconds with stubs, ~20-30 seconds with real
-// transformer inference on GPU.
-const MAX_POSTS = 40;
-
 // Only posts with relevance >= this threshold survive the ranker.
 const RELEVANCE_THRESHOLD = 0.20;
 
 export async function POST(req: NextRequest) {
+  // ── Rate limit ────────────────────────────────────────────────────────
+  const rl = rateLimit(clientKey(req, 'search'), RATE_RULES.search);
+  if (!rl.ok) {
+    return NextResponse.json(
+      {
+        error: `Rate limit reached — ${rl.limit} searches per minute. Try again in ${rl.retryAfter}s.`,
+        retryAfter: rl.retryAfter,
+      },
+      { status: 429, headers: { 'Retry-After': String(rl.retryAfter) } },
+    );
+  }
+
   let body: any = {};
   try {
     body = await req.json();
@@ -37,26 +50,35 @@ export async function POST(req: NextRequest) {
   const tone: string = (body.tone || 'helpful').toString();
   const time: string = (body.time || 'week').toString();
 
-  if (query.length < 3) {
-    return NextResponse.json({ error: 'Query too short' }, { status: 400 });
-  }
+  const invalid = validateQuery(query);
+  if (invalid) return NextResponse.json({ error: invalid }, { status: 400 });
+
+  // Client-selected post budget, clamped server-side to the allowed set so a
+  // hand-crafted request cannot ask for thousands of model forward passes.
+  const maxPosts = clampPostLimit(body.limit);
 
   // ── Retrieve ──────────────────────────────────────────────────────────
   // Fetch across two sort orders in parallel to broaden coverage. Reddit
-  // often ranks "new" and "relevance" quite differently.
+  // often ranks "new" and "relevance" quite differently. Each leg fetches
+  // roughly half the budget.
+  const perSort = Math.max(5, Math.ceil(maxPosts / 2));
   const [rNew, rRel] = await Promise.all([
-    searchReddit(query, { sort: 'new', time, limit: 25 }),
-    searchReddit(query, { sort: 'relevance', time, limit: 25 }),
+    searchReddit(query, { sort: 'new', time, limit: perSort }),
+    searchReddit(query, { sort: 'relevance', time, limit: perSort }),
   ]);
   const seen = new Set<string>();
   const raw = [...rNew, ...rRel].filter((p) => {
     if (seen.has(p.id)) return false;
     seen.add(p.id);
     return true;
-  }).slice(0, MAX_POSTS);
+  }).slice(0, maxPosts);
 
   if (raw.length === 0) {
-    return NextResponse.json({ posts: [], stats: { fetched: 0 } });
+    return NextResponse.json({
+      posts: [],
+      stats: { fetched: 0, limit: maxPosts },
+      quota: { remaining: rl.remaining, limit: rl.limit },
+    });
   }
 
   // ── Classify intent + score relevance (in parallel per post) ─────────
@@ -107,9 +129,11 @@ export async function POST(req: NextRequest) {
     posts: enriched,
     stats: {
       fetched: raw.length,
+      limit: maxPosts,
       passed_intent: scored.filter((p) => p.intent === 'buying_intent').length,
       passed_relevance: survivors.length,
       final: enriched.length,
     },
+    quota: { remaining: rl.remaining, limit: rl.limit },
   });
 }
