@@ -665,6 +665,56 @@ button { font-family: inherit; }
 .tab-count { color: var(--text-tertiary); font-weight: 500; }
 .tab.active .tab-count { color: var(--brand-primary); }
 
+/* Copy-to-clipboard button ------------------------------------------ */
+.copy-btn { transition: background 140ms, color 140ms, border-color 140ms; }
+.copy-btn.copied {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: rgba(16,185,129,0.35);
+  box-shadow: none;
+}
+.copy-btn.copied:hover { background: var(--success-bg); transform: none; }
+.copy-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Result notices ------------------------------------------------------
+   Explains how a result set was produced. A widened match is a normal
+   outcome, so only genuine failures use the danger palette. */
+.result-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border-default);
+  background: var(--bg-surface);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+}
+.result-notice strong { display: block; color: var(--text-primary); font-weight: 600; }
+.result-notice-body { color: var(--text-secondary); margin-top: 3px; }
+.result-notice-icon { flex: none; margin-top: 1px; }
+
+.result-notice.info {
+  background: var(--brand-tint);
+  border-color: rgba(255,69,0,0.22);
+}
+.result-notice.info .result-notice-icon { color: var(--brand-primary); }
+
+.result-notice.empty {
+  background: var(--bg-surface-alt);
+  border-color: var(--border-default);
+}
+.result-notice.empty .result-notice-icon { color: var(--text-tertiary); }
+
+.result-notice.error {
+  background: var(--danger-bg);
+  border-color: rgba(239,68,68,0.30);
+}
+.result-notice.error .result-notice-icon { color: var(--danger); }
+.result-notice.error strong { color: var(--danger); }
+
 /* Rate-limit / quota notice ----------------------------------------- */
 .quota-note {
   display: flex;

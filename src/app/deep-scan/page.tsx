@@ -5,6 +5,8 @@ import { DashboardShell } from '@/components/DashboardShell';
 import { ChipSelect } from '@/components/ChipSelect';
 import { SearchPanel } from '@/components/SearchPanel';
 import { QuotaNote } from '@/components/QuotaNote';
+import { CopyButton } from '@/components/CopyButton';
+import { ResultNotice } from '@/components/ResultNotice';
 import { Icon } from '@/components/Icon';
 import { buildLimitOptions, TONE_OPTIONS } from '@/lib/options';
 
@@ -24,6 +26,8 @@ interface CommentLead {
   urgency: string;
   reply: string;
   saved?: boolean;
+  /** 'comment' when mined from a thread, 'post' when the post itself is the lead. */
+  source?: 'comment' | 'post';
 }
 
 interface Stats {
@@ -32,6 +36,11 @@ interface Stats {
   buyers_found: number;
   sellers_filtered: number;
   advisors_filtered: number;
+  post_leads?: number;
+  /** 'comments' | 'posts' | 'none' — where the returned leads came from. */
+  source?: string;
+  /** True when the buyer-attracting queries found nothing and we widened. */
+  broadened?: boolean;
 }
 
 // Deep Scan is the heaviest feature — every post costs a comment-thread
@@ -74,11 +83,6 @@ export default function DeepScanPage() {
       setLeads(data.leads || []);
       setStats(data.stats || null);
       if (data.quota) setQuota(data.quota);
-      if ((data.leads || []).length === 0) {
-        setError(
-          'No buyer comments found. Try a broader product description, or wait — buyer replies accumulate over time.',
-        );
-      }
     } catch (err: any) {
       setError(err.message || 'Scan failed');
     } finally {
@@ -178,12 +182,33 @@ export default function DeepScanPage() {
       />
 
       {error && (
-        <div className="card" style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}>
-          <p style={{ color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Icon name="alert" size={15} />
-            {error}
-          </p>
-        </div>
+        <ResultNotice kind="error" title="Deep Scan failed">
+          {error}
+        </ResultNotice>
+      )}
+
+      {!error && !loading && stats && leads.length === 0 && (
+        <ResultNotice kind="empty" title="No leads found in these threads">
+          Reddit returned {stats.posts_scanned} post
+          {stats.posts_scanned === 1 ? '' : 's'} and {stats.comments_examined} comment
+          {stats.comments_examined === 1 ? '' : 's'}, and none of them showed buying
+          intent. Try a broader product description, or widen the wording.
+        </ResultNotice>
+      )}
+
+      {!error && leads.length > 0 && stats?.source === 'posts' && (
+        <ResultNotice kind="info" title="Showing post authors, not commenters">
+          The threads we found had no buyer comments, so Deep Scan fell back to the
+          posts themselves and kept the authors showing buying intent. These are
+          people asking publicly rather than replying under someone else&apos;s post.
+        </ResultNotice>
+      )}
+
+      {!error && leads.length > 0 && stats?.broadened && (
+        <ResultNotice kind="info" title="Search was widened">
+          The hiring-style phrasings returned nothing, so the product term was
+          searched directly over a longer time window.
+        </ResultNotice>
       )}
 
       {stats && (
@@ -233,7 +258,7 @@ function CommentLeadCard({ lead, onSave }: { lead: CommentLead; onSave: (l: Comm
       <div className="lead-head">
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 12, color: 'var(--text-tertiary)', marginBottom: 6 }}>
-            Comment under:
+            {lead.source === 'post' ? 'Post by the author:' : 'Comment under:'}
           </div>
           <a href={lead.parent_post_url} target="_blank" rel="noreferrer" className="lead-title">
             {lead.parent_post_title}
@@ -256,12 +281,15 @@ function CommentLeadCard({ lead, onSave }: { lead: CommentLead; onSave: (l: Comm
       </div>
       {lead.reply && <div className="reply-box">{lead.reply}</div>}
       <div className="lead-actions">
-        <button className="btn btn-ghost" onClick={() => onSave(lead)} disabled={lead.saved}>
-          {lead.saved ? (<><Icon name="check" size={13} /> Saved</>) : 'Save to leads'}
-        </button>
+        {lead.reply && (
+          <CopyButton text={lead.reply} className="btn btn-primary" label="Copy reply" />
+        )}
         <a className="btn btn-ghost" href={lead.parent_post_url} target="_blank" rel="noreferrer">
           Open thread <Icon name="external" size={12} />
         </a>
+        <button className="btn btn-ghost" onClick={() => onSave(lead)} disabled={lead.saved}>
+          {lead.saved ? (<><Icon name="check" size={13} /> Saved</>) : 'Save to leads'}
+        </button>
       </div>
     </div>
   );
