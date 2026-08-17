@@ -87,6 +87,28 @@ OFF_TOPIC = [
     "Reminder to drink water everyone",
 ]
 
+# Substantive off-topic bodies. Without these the class was the only one that
+# usually had an empty body, and the classifier learned "no body => off_topic"
+# instead of learning intent — which broke it on Reddit link posts, whose
+# selftext is always empty.
+OFF_TOPIC_BODIES = [
+    "Third time this week. I have started taping the cable down.",
+    "Took way longer than I expected but worth every hour.",
+    "Not sure why I am even posting this, just needed to vent a bit.",
+    "Been lurking here for years, first time actually posting.",
+    "Photos in the comments if anyone is curious.",
+    "Sorry if this is the wrong sub, mods feel free to remove.",
+    "Anyway, hope everyone is having a decent week.",
+    "My partner thinks I am being ridiculous about this.",
+    "Genuinely one of the highlights of my month, which says a lot.",
+    "Edit: wow this blew up, thanks for the awards.",
+]
+
+# Probability that a post has no body at all, applied UNIFORMLY across every
+# label so body presence carries no signal about the class. Reddit link posts
+# have empty selftext regardless of intent, so the models must cope with it.
+EMPTY_BODY_RATE = 0.22
+
 BUDGETS = [
     "budget is around $500", "can pay $50/hr", "budget $2k for the project",
     "looking to spend under $1000", "have a $300 monthly budget",
@@ -176,6 +198,16 @@ def join_body(rng: random.Random, *parts: str) -> str:
     return sep.join(chunks)
 
 
+def maybe_drop_body(rng: random.Random, body: str) -> str:
+    """
+    Blank the body at a fixed rate, identically for every label.
+
+    Body presence must not correlate with the class, or the model learns that
+    shortcut instead of the task.
+    """
+    return "" if rng.random() < EMPTY_BODY_RATE else body
+
+
 def write_jsonl(path: Path, rows: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
@@ -208,6 +240,7 @@ def gen_intent(rng: random.Random, n: int) -> list[dict]:
             maybe(rng, rng.choice(URGENCY_HIGH + URGENCY_MED), 0.5),
             maybe(rng, "DM me with your portfolio.", 0.4),
         )
+        body = maybe_drop_body(rng, body)
         rows.append({"text": f"{title}\n\n{body}", "label": "buying_intent"})
 
     for _ in range(per):  # advice_seeking
@@ -225,6 +258,7 @@ def gen_intent(rng: random.Random, n: int) -> list[dict]:
             maybe(rng, "Tried a few tutorials but they are outdated.", 0.6),
             maybe(rng, "Any guides appreciated.", 0.4),
         )
+        body = maybe_drop_body(rng, body)
         rows.append({"text": f"{title}\n\n{body}", "label": "advice_seeking"})
 
     for _ in range(per):  # discussion
@@ -241,11 +275,17 @@ def gen_intent(rng: random.Random, n: int) -> list[dict]:
             "Curious what this community thinks.",
             maybe(rng, "I have gone back and forth on this for a while.", 0.5),
         )
+        body = maybe_drop_body(rng, body)
         rows.append({"text": f"{title}\n\n{body}", "label": "discussion"})
 
     for _ in range(n - 3 * per):  # off_topic
         title = rng.choice(OFF_TOPIC)
-        body = maybe(rng, "Just had to share.", 0.4)
+        body = join_body(
+            rng,
+            rng.choice(OFF_TOPIC_BODIES),
+            maybe(rng, rng.choice(OFF_TOPIC_BODIES), 0.3),
+        )
+        body = maybe_drop_body(rng, body)
         rows.append({"text": f"{title}\n\n{body}", "label": "off_topic"})
 
     rng.shuffle(rows)
