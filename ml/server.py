@@ -218,9 +218,31 @@ def _try_load_reply():
         from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
         tok = AutoTokenizer.from_pretrained(str(ckpt))
-        model = AutoModelForSeq2SeqLM.from_pretrained(str(ckpt)).eval()
+        model = AutoModelForSeq2SeqLM.from_pretrained(str(ckpt))
+
+        # T5 ties encoder.embed_tokens and decoder.embed_tokens to `shared`.
+        # Merging the LoRA adapter writes `shared` and `lm_head` with different
+        # values, so transformers declines to tie them and reports the two
+        # embed_tokens as MISSING — leaving them on the meta device. Any later
+        # .to() then fails with "Cannot copy out of meta tensor". Re-point them
+        # at `shared`, which is what the tie would have done.
+        if hasattr(model, "shared"):
+            if hasattr(model, "encoder"):
+                model.encoder.embed_tokens = model.shared
+            if hasattr(model, "decoder"):
+                model.decoder.embed_tokens = model.shared
+
+        meta = [n for n, p in model.named_parameters() if p.device.type == "meta"]
+        if meta:
+            raise RuntimeError(
+                f"{len(meta)} parameter(s) still on the meta device after re-tying "
+                f"(first: {meta[0]}). The checkpoint is incomplete."
+            )
+
+        model.eval()
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        model.to(device)
+        if device != "cpu":
+            model.to(device)  # already on CPU otherwise; .to() is a no-op cost
         _reply_pipeline = {"model": model, "tokenizer": tok, "device": device}
         print(f"[server] Loaded reply model from {ckpt} on {device}")
     except Exception as exc:
