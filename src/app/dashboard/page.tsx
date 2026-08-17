@@ -5,6 +5,8 @@ import { DashboardShell } from '@/components/DashboardShell';
 import { ChipSelect } from '@/components/ChipSelect';
 import { SearchPanel } from '@/components/SearchPanel';
 import { QuotaNote } from '@/components/QuotaNote';
+import { CopyButton } from '@/components/CopyButton';
+import { ResultNotice, TIER_NOTES } from '@/components/ResultNotice';
 import { Icon } from '@/components/Icon';
 import { DEFAULT_POST_LIMIT } from '@/lib/limits';
 import { buildLimitOptions, TIME_OPTIONS, TONE_OPTIONS } from '@/lib/options';
@@ -45,12 +47,17 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [posts, setPosts] = useState<ScoredPost[]>([]);
   const [error, setError] = useState('');
+  const [tier, setTier] = useState('strict');
+  const [reason, setReason] = useState('');
+  const [searched, setSearched] = useState(false);
   const [quota, setQuota] = useState<{ remaining: number; limit: number } | null>(null);
 
   async function handleSearch() {
     if (query.trim().length < 3) return;
     setLoading(true);
     setError('');
+    setReason('');
+    setSearched(true);
     setPosts([]);
     try {
       const res = await fetch('/api/search', {
@@ -68,10 +75,9 @@ export default function DashboardPage() {
         throw new Error(data.error || `Search failed (${res.status})`);
       }
       setPosts(data.posts || []);
+      setTier(data.stats?.tier ?? 'strict');
+      setReason(data.reason ?? '');
       if (data.quota) setQuota(data.quota);
-      if ((data.posts || []).length === 0) {
-        setError('No high-intent leads matched. Try a different query, or widen the time window.');
-      }
     } catch (err: any) {
       setError(err.message || 'Search failed');
     } finally {
@@ -173,15 +179,22 @@ export default function DashboardPage() {
       />
 
       {error && (
-        <div
-          className="card"
-          style={{ borderColor: 'rgba(239,68,68,0.30)', background: 'var(--danger-bg)' }}
-        >
-          <p style={{ color: 'var(--danger)', margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Icon name="alert" size={15} />
-            {error}
-          </p>
-        </div>
+        <ResultNotice kind="error" title="Search failed">
+          {error}
+        </ResultNotice>
+      )}
+
+      {!error && !loading && searched && posts.length === 0 && (
+        <ResultNotice kind="empty" title="Reddit returned no posts for this query">
+          {reason ||
+            'Try different wording, a longer time window, or a higher post count.'}
+        </ResultNotice>
+      )}
+
+      {!error && posts.length > 0 && TIER_NOTES[tier] && (
+        <ResultNotice kind="info" title={TIER_NOTES[tier]!.title}>
+          {TIER_NOTES[tier]!.body}
+        </ResultNotice>
       )}
 
       {posts.length > 0 && (
@@ -229,12 +242,15 @@ function LeadCard({ p, onSave }: { p: ScoredPost; onSave: (p: ScoredPost) => voi
       </div>
       {p.reply && <div className="reply-box">{p.reply}</div>}
       <div className="lead-actions">
-        <button className="btn btn-ghost" onClick={() => onSave(p)} disabled={p.saved}>
-          {p.saved ? (<><Icon name="check" size={13} /> Saved</>) : 'Save to leads'}
-        </button>
+        {p.reply && (
+          <CopyButton text={p.reply} className="btn btn-primary" label="Copy reply" />
+        )}
         <a className="btn btn-ghost" href={p.permalink} target="_blank" rel="noreferrer">
           Open on Reddit <Icon name="external" size={12} />
         </a>
+        <button className="btn btn-ghost" onClick={() => onSave(p)} disabled={p.saved}>
+          {p.saved ? (<><Icon name="check" size={13} /> Saved</>) : 'Save to leads'}
+        </button>
       </div>
     </div>
   );

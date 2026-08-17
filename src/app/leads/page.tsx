@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { DashboardShell } from '@/components/DashboardShell';
 import { ChipSelect } from '@/components/ChipSelect';
+import { CopyButton } from '@/components/CopyButton';
 import { Icon } from '@/components/Icon';
 
 interface Lead {
@@ -188,6 +189,16 @@ export default function LeadsPage() {
             </div>
             {l.suggestedReply && <div className="reply-box">{l.suggestedReply}</div>}
             <div className="lead-actions">
+              {l.suggestedReply && (
+                <CopyButton
+                  text={l.suggestedReply}
+                  className="btn btn-primary"
+                  label="Copy reply"
+                />
+              )}
+              <a className="btn btn-ghost" href={l.url} target="_blank" rel="noreferrer">
+                Open on Reddit <Icon name="external" size={12} />
+              </a>
               {l.status !== 'replied' && (
                 <button className="btn btn-ghost" onClick={() => toggleStatus(l.id, 'replied')}>
                   <Icon name="check" size={13} /> Mark replied
@@ -201,9 +212,6 @@ export default function LeadsPage() {
               <button className="btn btn-ghost" onClick={() => del(l.id)}>
                 <Icon name="trash" size={13} /> Delete
               </button>
-              <a className="btn btn-ghost" href={l.url} target="_blank" rel="noreferrer">
-                Open <Icon name="external" size={12} />
-              </a>
             </div>
           </div>
         );

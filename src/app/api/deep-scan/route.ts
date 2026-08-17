@@ -24,6 +24,7 @@ import {
   validateQuery,
 } from '@/lib/limits';
 import {
+  classifyIntent,
   classifyRole,
   predictSentiment,
   generateReply,
@@ -92,16 +93,25 @@ export async function POST(req: NextRequest) {
       posts.push(p);
     }
   }
+  // The buyer-attracting phrasings ("[for hire] X", "hiring X") are narrow by
+  // design. When they return nothing, widen to a plain search of the product
+  // itself rather than reporting an empty scan.
+  let broadened = false;
+  if (posts.length === 0) {
+    broadened = true;
+    const [plainNew, plainRel] = await Promise.all([
+      searchReddit(product, { sort: 'new', time: 'month', limit: 25 }),
+      searchReddit(product, { sort: 'relevance', time: 'year', limit: 25 }),
+    ]);
+    for (const p of [...plainNew, ...plainRel]) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      posts.push(p);
+    }
+  }
+
   posts.sort((a, b) => b.num_comments - a.num_comments);
   const targetPosts = posts.slice(0, maxPostsToScan);
-
-  if (targetPosts.length === 0) {
-    return NextResponse.json({
-      leads: [],
-      stats: { posts_scanned: 0, comments_examined: 0, buyers_found: 0 },
-      quota: { remaining: rl.remaining, limit: rl.limit },
-    });
-  }
 
   // ── Step 2: fetch comments for each target post (in parallel) ────────
   const commentBundles = await Promise.all(
@@ -165,14 +175,84 @@ export async function POST(req: NextRequest) {
   // Rank buyer-leads by relevance-to-product
   enriched.sort((a, b) => b.relevance - a.relevance);
 
+  // ── Step 6: fall back to the POSTS themselves ────────────────────────
+  // Comment mining is the ideal signal, but threads are often young, thin,
+  // or Reddit's RSS comment feed returns nothing. Rather than reporting an
+  // empty result, treat the retrieved posts as candidate leads and keep the
+  // ones whose AUTHOR shows buying intent. Same contract, different source,
+  // clearly labelled so the UI can say where a lead came from.
+  let postLeads: typeof enriched = [];
+  if (enriched.length === 0 && posts.length > 0) {
+    const candidates = posts.slice(0, Math.max(maxPostsToScan, 15));
+    const scored = await Promise.all(
+      candidates.map(async (p) => {
+        const text = `${p.title}\n${p.selftext ?? ''}`.slice(0, 2000);
+        const [intent, rel] = await Promise.all([
+          classifyIntent(p.title, p.selftext ?? ''),
+          scoreRelevance(product, p.title, p.selftext ?? ''),
+        ]);
+        return { post: p, text, intent: intent?.label ?? 'off_topic', relevance: rel?.score ?? 0 };
+      }),
+    );
+
+    // A post-level lead must show buying intent, per the feature's premise.
+    let keep = scored.filter((s) => s.intent === 'buying_intent');
+    if (keep.length === 0) {
+      keep = scored.filter((s) => s.intent === 'advice_seeking');
+    }
+    keep.sort((a, b) => b.relevance - a.relevance);
+
+    // Drop posts with no topical connection to the product. Broad queries
+    // pull in unrelated subreddits, and a game trailer offered as an "SEO
+    // agency" lead is worse than a shorter list. Only applied while it still
+    // leaves something to show.
+    const POST_RELEVANCE_FLOOR = 0.15;
+    const relevant = keep.filter((s) => s.relevance >= POST_RELEVANCE_FLOOR);
+    if (relevant.length > 0) keep = relevant;
+
+    postLeads = await Promise.all(
+      keep.slice(0, 12).map(async (s) => {
+        const [sent, role, rep] = await Promise.all([
+          predictSentiment(s.text),
+          classifyRole(s.text),
+          generateReply(product, s.post.title, s.post.selftext ?? '', tone),
+        ]);
+        return {
+          id: `t3_${s.post.id}`,
+          commentId: '',
+          author: s.post.author,
+          body: (s.post.selftext ?? '').slice(0, 1500) || s.post.title,
+          subreddit: s.post.subreddit,
+          parent_post_id: s.post.id,
+          parent_post_title: s.post.title,
+          parent_post_url: s.post.permalink,
+          role: role?.role ?? 'buyer',
+          role_confidence: role?.confidence ?? 0,
+          relevance: s.relevance,
+          sentiment: sent?.sentiment ?? 'neutral',
+          urgency: sent?.urgency ?? 'low',
+          reply: rep?.reply ?? '',
+          source: 'post' as const,
+        };
+      }),
+    );
+  }
+
+  const leads = enriched.length > 0
+    ? enriched.map((l) => ({ ...l, source: 'comment' as const }))
+    : postLeads;
+
   return NextResponse.json({
-    leads: enriched,
+    leads,
     stats: {
       posts_scanned: targetPosts.length,
       comments_examined: allComments.length,
       buyers_found: enriched.length,
       sellers_filtered: roleResults.filter((r) => r.role === 'seller').length,
       advisors_filtered: roleResults.filter((r) => r.role === 'advisor').length,
+      post_leads: postLeads.length,
+      source: enriched.length > 0 ? 'comments' : postLeads.length > 0 ? 'posts' : 'none',
+      broadened,
     },
     quota: { remaining: rl.remaining, limit: rl.limit },
   });

@@ -61,10 +61,28 @@ export async function POST(req: NextRequest) {
     return true;
   });
 
+  // Widen the window before giving up: a narrow product term over one month
+  // often returns nothing while a year does.
+  let broadened = false;
+  if (posts.length === 0) {
+    broadened = true;
+    const [wNew, wRel] = await Promise.all([
+      searchReddit(product, { sort: 'new', time: 'year', limit: perSort }),
+      searchReddit(product, { sort: 'relevance', time: 'all', limit: perSort }),
+    ]);
+    for (const p of [...wNew, ...wRel]) {
+      if (seen.has(p.id)) continue;
+      seen.add(p.id);
+      posts.push(p);
+    }
+  }
+
   if (posts.length === 0) {
     return NextResponse.json({
       subreddits: [],
-      stats: { posts_examined: 0, subreddits_found: 0 },
+      stats: { posts_examined: 0, subreddits_found: 0, broadened },
+      reason:
+        'Reddit returned no posts for this description, so there are no communities to rank. Try different wording, or wait a moment if requests are being rate limited.',
       quota: { remaining: rl.remaining, limit: rl.limit },
     });
   }
@@ -124,6 +142,7 @@ export async function POST(req: NextRequest) {
     stats: {
       posts_examined: posts.length,
       subreddits_found: scored.length,
+      broadened,
     },
     quota: { remaining: rl.remaining, limit: rl.limit },
   });

@@ -329,7 +329,10 @@ def classify_intent(req: IntentReq):
     text = f"{req.title}\n{req.body}"[:2000]
     pipe = _try_load_intent()
     if pipe is not None:
-        out = pipe(text)[0][0]
+        # Truncate explicitly. A 2000-character post exceeds DistilBERT's 512
+        # position embeddings and raises "size of tensor a must match tensor
+        # b", which the caller sees as a dropped classification.
+        out = pipe(text, truncation=True, max_length=256)[0][0]
         return IntentResp(label=out["label"], confidence=float(out["score"]))
     # Stub: pattern-count based
     buy = _matches(BUY_INTENT_PATTERNS, text)
@@ -387,7 +390,7 @@ class RoleResp(BaseModel):
 def classify_role(req: RoleReq):
     pipe = _try_load_role()
     if pipe is not None:
-        out = pipe(req.text[:2000])[0][0]
+        out = pipe(req.text[:2000], truncation=True, max_length=256)[0][0]
         return RoleResp(role=out["label"], confidence=float(out["score"]))
     # Stub: rule counts
     sell = _matches(SELL_PATTERNS, req.text)
@@ -450,12 +453,136 @@ class ReplyResp(BaseModel):
     reply: str
 
 
+# Openers are written to sound like a person typing on Reddit: no em dashes,
+# no marketing voice, no claims the sender cannot back up.
 TONE_OPENERS = {
-    "helpful": "Happy to share what's worked for me — ",
-    "professional": "We've helped several teams with this. Briefly, ",
-    "casual": "Yeah I've been through this. Honestly, ",
-    "empathetic": "Totally get where you're coming from — ",
+    "helpful": "Happy to help with this. ",
+    "professional": "Hi, this is the kind of work I do. ",
+    "casual": "Hey, I've dealt with this before. ",
+    "empathetic": "That sounds frustrating, and it's a common one. ",
 }
+
+# Characters that make a reply read as machine written. Em and en dashes are
+# the giveaway; smart quotes and ellipsis characters are tidied at the same
+# time so the text pastes cleanly into a Reddit comment box.
+_DASH_RE = re.compile(r"\s*[—–]\s*")
+_MULTISPACE_RE = re.compile(r"[ \t]{2,}")
+_SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([,.!?;:])")
+
+
+# Claims a generated reply must never make on the user's behalf. The model
+# cannot know the sender's track record, so any assertion of one is a
+# fabrication the user would be posting under their own name. Output matching
+# these falls back to the grounded stub instead.
+_UNVERIFIABLE_CLAIMS = [
+    # Explicit credentials the sender may not have
+    r"\bcase stud(y|ies)\b",
+    r"\btrusted by\b",
+    r"\bguarantee(d|s)?\b",
+    r"\b\d+\+? years? of experience\b",
+    r"\bour clients?\b",
+    r"\bportfolio of\b",
+    r"\baward[- ]winning\b",
+    r"\bproven track record\b",
+    r"\b(top|leading|best)[- ]rated\b",
+    # First-person track-record claims. The model invents these wholesale,
+    # and they are the difference between "I can help" (fine to send on
+    # someone's behalf) and "I have done this before" (not ours to assert).
+    r"\b(I|we)'?ve delivered\b",
+    r"\b(I|we)'?ve helped\b",
+    r"\b(I|we)'?ve worked with\b",
+    r"\b(I|we) have helped\b",
+    r"\b(I|we)'?ve been doing\b",
+    r"\bI'?ve done this\b",
+    r"\bsimilar projects\b",
+]
+_CLAIM_RE = re.compile("|".join(_UNVERIFIABLE_CLAIMS), re.IGNORECASE)
+
+
+def _makes_unverifiable_claim(text: str) -> str | None:
+    """Return the offending phrase when a reply asserts something unprovable."""
+    m = _CLAIM_RE.search(text or "")
+    return m.group(0) if m else None
+
+
+def _incoherent(text: str, offer: str) -> str | None:
+    """
+    Catch the ways this generator degenerates.
+
+    It slot-fills a template with phrases lifted from the post, which is fine
+    when the phrase happens to fit and nonsense when it does not ("I'd suggest
+    beginning with a copywriter", "lose 60% of organic traffic usually unblocks
+    things"). Grammaticality is not checkable here, but the specific failure
+    shapes are.
+    """
+    t = (text or "").strip()
+    low = t.lower()
+
+    # The offer echoed several times is the clearest sign of a collapsed
+    # template rather than a written sentence.
+    if offer:
+        o = offer.lower().strip()
+        if len(o) > 3 and low.count(o) > 1:
+            return f"offer repeated {low.count(o)}x"
+
+    # Sentence fragments joined by a comma splice after our dash cleanup are
+    # fine, but a reply that is one long run-on is not.
+    if len(t) > 40 and t.count(".") == 0 and t.count("!") == 0:
+        return "no sentence break"
+
+    # Verb-initial fragments spliced mid-sentence ("If it helps, lose 60% of
+    # organic traffic usually unblocks things").
+    if re.search(r"\b(?:helps|start|begin|suggest)\w*,?\s+(?:lose|losing|lost|drop|dropped)\b", low):
+        return "post fragment spliced into template"
+
+    return None
+
+
+# auto     use the model only when it passes every quality gate (default)
+# model    always use the model when a checkpoint is loaded
+# template use the grounded template reply, never the model
+REPLY_MODE = os.environ.get("REDDIGEN_REPLY_MODE", "auto").lower()
+
+
+def _humanise(text: str) -> str:
+    """
+    Clean a generated reply so it reads like something a person wrote.
+
+    Applied to model output and stub output alike, so the guarantee holds
+    regardless of which produced the text.
+    """
+    if not text:
+        return text
+
+    t = text.strip()
+
+    # Drop a wrapping quote pair, which seq2seq models sometimes emit.
+    if len(t) > 1 and t[0] in "\"'" and t[-1] == t[0]:
+        t = t[1:-1].strip()
+
+    # Em/en dash to a comma: keeps the clause break without the tell.
+    t = _DASH_RE.sub(", ", t)
+
+    t = (
+        t.replace("’", "'").replace("‘", "'")
+        .replace("“", '"').replace("”", '"')
+        .replace("…", "...")
+        .replace(" ", " ")
+    )
+
+    # A dash swap can leave ", ," or ", ." behind.
+    t = re.sub(r",\s*,", ",", t)
+    t = re.sub(r",\s*([.!?])", r"\1", t)
+    t = _SPACE_BEFORE_PUNCT_RE.sub(r"\1", t)
+    t = _MULTISPACE_RE.sub(" ", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+
+    t = t.strip()
+    if t and t[0].islower():
+        # Lower-case openers are fine for the casual tone, but a stray
+        # lower-case start after cleaning usually means a lost first word.
+        t = t[0].upper() + t[1:]
+    return t
 
 
 @app.post("/generate-reply", response_model=ReplyResp)
@@ -474,26 +601,167 @@ def generate_reply(req: ReplyReq):
         enc = tok(
             prompt, return_tensors="pt", truncation=True, max_length=512
         ).to(device)
+        # Beam search costs num_beams forward passes per token. On CPU that
+        # dominates a search's wall-clock, since a lead list triggers one
+        # generation per post. Two beams keeps the output coherent at roughly
+        # half the cost; GPUs can afford the wider search.
+        beams = 4 if device != "cpu" else 2
         with torch.no_grad():
             out = model.generate(
                 **enc,
-                max_new_tokens=140,
-                num_beams=4,
+                max_new_tokens=110,
+                num_beams=beams,
                 no_repeat_ngram_size=3,
                 early_stopping=True,
             )
-        text = tok.decode(out[0], skip_special_tokens=True).strip()
-        if text:
-            return ReplyResp(reply=text)
-        # Empty generation: fall through to the stub rather than return "".
-    # Stub: templated reply that references the post
+        text = _humanise(tok.decode(out[0], skip_special_tokens=True))
+
+        # Three ways generated output is rejected in favour of the stub:
+        #   1. too short, or the model echoing the prompt back
+        #   2. it asserts a track record the user cannot stand behind
+        #   3. it repeats a phrase, which is how this model degenerates
+        if REPLY_MODE == "model":
+            if text:
+                return ReplyResp(reply=text)
+        elif REPLY_MODE != "template":
+            claim = _makes_unverifiable_claim(text)
+            flaw = _incoherent(text, _normalise_offer(req.query))
+            too_short = len(text) < 40
+            echoed = "post title:" in text.lower() or "our offer:" in text.lower()
+
+            if claim:
+                print(f"[server] reply rejected, unverifiable claim: {claim!r}")
+            elif flaw:
+                print(f"[server] reply rejected, {flaw}")
+
+            if not (too_short or echoed or claim or flaw):
+                return ReplyResp(reply=text)
+
+    # Stub: a grounded, plainly worded reply that references the post.
+    return ReplyResp(reply=_humanise(_stub_reply(req)))
+
+
+# Users type search phrases ("looking for a wordpress developer"), but the
+# reply needs the underlying SERVICE ("wordpress development"). Left raw it
+# produces "I work on looking for a wordpress developer".
+_SEARCH_PREFIX_RE = re.compile(
+    r"^\s*(?:i\s+(?:am|'m)\s+)?"
+    r"(?:looking\s+for|searching\s+for|need|needs|needed|want|wanted|"
+    r"hiring|hire|find|finding|seeking|in\s+search\s+of|"
+    r"anyone\s+(?:know|recommend)|recommend|best|good|top)\s+"
+    r"(?:a|an|the|some|any)?\s*",
+    re.IGNORECASE,
+)
+_TRAILING_NOISE_RE = re.compile(
+    r"\s+(?:for|to)\s+(?:my|our|me|us)\b.*$", re.IGNORECASE
+)
+
+
+def _normalise_offer(query: str) -> str:
+    """Turn a search phrase into something that reads as a service offering."""
+    q = (query or "").strip().rstrip("?.!,")
+    if not q:
+        return ""
+    q = _SEARCH_PREFIX_RE.sub("", q)
+    q = _TRAILING_NOISE_RE.sub("", q).strip()
+    return q or (query or "").strip()
+
+
+# Words a quoted fragment must not end on, or the sentence trails off.
+_DANGLING_WORDS = {
+    "a", "an", "the", "of", "for", "to", "and", "or", "but", "with", "in",
+    "on", "at", "by", "from", "as", "that", "this", "my", "our", "your",
+    "is", "was", "are", "were", "be", "been", "it", "i", "we", "they",
+    "handful", "couple", "lot", "bunch", "few", "some", "any",
+}
+
+
+def _pick_detail(body: str, limit: int = 110) -> str:
+    """
+    Pull one short, quotable detail from the post.
+
+    Long fragments read badly when embedded mid-sentence, so anything over
+    the limit is trimmed at a word boundary, and very short or very long
+    sentences are skipped entirely.
+    """
+    body = (body or "").strip()
+    if not body:
+        return ""
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", body):
+        s = sentence.strip().strip("-–—•*>").strip()
+        if len(s) < 15:
+            continue
+        if len(s) > limit:
+            cut = s[:limit].rsplit(" ", 1)[0].rstrip(",;:")
+            # Trimming mid-clause leaves a dangling word ("...for a handful
+            # of"), which reads worse than not quoting at all. Drop trailing
+            # function words until the fragment ends on something concrete.
+            words = cut.split()
+            while words and words[-1].lower() in _DANGLING_WORDS:
+                words.pop()
+            cut = " ".join(words).rstrip(",;:")
+            if len(cut) < 15:
+                continue
+            s = cut
+        return s.rstrip(".")
+    return ""
+
+
+def _stub_reply(req: "ReplyReq") -> str:
+    """
+    Build a reply that reads like a person wrote it.
+
+    Deliberately makes no claim the sender cannot stand behind: it offers
+    help and asks a question rather than asserting past results.
+    """
     opener = TONE_OPENERS.get(req.tone, TONE_OPENERS["helpful"])
-    hook = req.post_title.strip().rstrip("?").rstrip(".")
-    body = (
-        f"{opener}for {hook.lower()}, {req.query} has worked well in similar setups. "
-        f"Happy to walk you through the specifics if it helps — feel free to reply here or DM."
-    )
-    return ReplyResp(reply=body)
+    offer = _normalise_offer(req.query)
+    title = req.post_title.strip().rstrip("?").rstrip(".")
+
+    # Quote a concrete detail so the reply is clearly a response to *this*
+    # thread rather than a copy-paste pitch. Keep the poster's own casing:
+    # lower-casing their words reads like a bot paraphrasing them.
+    detail = _pick_detail(req.post_body)
+
+    # When the post has no body there is no specific detail to reflect back,
+    # so the reply asks a question instead of pretending to know the context.
+    # Embedding the raw title mid-sentence reads badly ("For need a logo for
+    # my coffee shop, ...") because titles are rarely grammatical fragments.
+    if req.tone == "casual":
+        parts = [
+            opener,
+            f"This is the kind of work I do ({offer})." if offer else "",
+            f"You mentioned {detail}, which is usually the place to start."
+            if detail else "What have you tried so far?",
+            "If you want a hand, reply here or send me a message.",
+        ]
+    elif req.tone == "professional":
+        parts = [
+            opener,
+            f"This is my area ({offer})." if offer else "",
+            f"You mentioned {detail}, which would be the first thing I'd look at."
+            if detail else
+            "I'd need a little more detail on your setup before suggesting an approach.",
+            "Happy to discuss it properly if that would be useful.",
+        ]
+    elif req.tone == "empathetic":
+        parts = [
+            opener,
+            f"You mentioned {detail}, and that part is rarely as simple as it looks."
+            if detail else "This kind of thing usually takes longer than people expect.",
+            f"This is the kind of work I do ({offer}), so happy to talk it through with no pressure."
+            if offer else "Happy to talk it through with no pressure.",
+        ]
+    else:  # helpful
+        parts = [
+            opener,
+            f"This is the kind of work I do ({offer})." if offer else "",
+            f"You mentioned {detail}, so that's probably where I'd start."
+            if detail else "Happy to take a look if you can share a bit more detail.",
+            "Just reply here if that's useful.",
+        ]
+
+    return " ".join(p.strip() for p in parts if p and p.strip())
 
 
 # ─── Entry point ─────────────────────────────────────────────────────────

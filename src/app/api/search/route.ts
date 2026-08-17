@@ -66,17 +66,45 @@ export async function POST(req: NextRequest) {
     searchReddit(query, { sort: 'new', time, limit: perSort }),
     searchReddit(query, { sort: 'relevance', time, limit: perSort }),
   ]);
-  const seen = new Set<string>();
-  const raw = [...rNew, ...rRel].filter((p) => {
-    if (seen.has(p.id)) return false;
-    seen.add(p.id);
-    return true;
-  }).slice(0, maxPosts);
+  // Dedupe by id, and also by title+author: Reddit cross-posts appear in
+  // several subreddits with different ids, which otherwise fills the results
+  // with the same post repeated.
+  const seenIds = new Set<string>();
+  const seenPosts = new Set<string>();
+  const dedupe = (list: typeof rNew) =>
+    list.filter((p) => {
+      const key = `${p.title.trim().toLowerCase()}|${p.author.toLowerCase()}`;
+      if (seenIds.has(p.id) || seenPosts.has(key)) return false;
+      seenIds.add(p.id);
+      seenPosts.add(key);
+      return true;
+    });
+
+  let raw = dedupe([...rNew, ...rRel]);
+
+  // Nothing came back: widen the time window before giving up. A narrow query
+  // over "past week" often has no matches while "past year" does.
+  let widenedWindow = false;
+  if (raw.length === 0 && time !== 'year') {
+    widenedWindow = true;
+    const [wNew, wRel] = await Promise.all([
+      searchReddit(query, { sort: 'new', time: 'year', limit: perSort }),
+      searchReddit(query, { sort: 'relevance', time: 'year', limit: perSort }),
+    ]);
+    raw = dedupe([...wNew, ...wRel]);
+  }
+
+  raw = raw.slice(0, maxPosts);
 
   if (raw.length === 0) {
+    // Genuinely nothing retrieved. Reddit returned no matches, or rate
+    // limited us. Say so plainly instead of implying the models found
+    // nothing worth showing.
     return NextResponse.json({
       posts: [],
-      stats: { fetched: 0, limit: maxPosts },
+      stats: { fetched: 0, limit: maxPosts, tier: 'no_results', widenedWindow },
+      reason:
+        'Reddit returned no posts for this query. Try different wording, a longer time window, or wait a moment if requests are being rate limited.',
       quota: { remaining: rl.remaining, limit: rl.limit },
     });
   }
@@ -97,14 +125,55 @@ export async function POST(req: NextRequest) {
     }),
   );
 
-  // ── Filter: keep buying-intent OR strongly relevant posts ────────────
-  const survivors = scored
-    .filter(
-      (p) =>
-        (p.intent === 'buying_intent' || p.intent === 'advice_seeking') &&
-        p.relevance >= RELEVANCE_THRESHOLD,
-    )
-    .sort((a, b) => b.relevance - a.relevance);
+  // ── Filter, relaxing in stages rather than returning nothing ─────────
+  // A strict filter is right when the corpus is rich, but on a narrow query
+  // it can eliminate every candidate and leave the user staring at an error.
+  // Widen the net step by step and report which tier produced the results, so
+  // the UI can be honest about how they were selected.
+  const byRelevance = (a: typeof scored[number], b: typeof scored[number]) =>
+    b.relevance - a.relevance;
+
+  const TIERS: Array<{ name: string; pick: () => typeof scored }> = [
+    {
+      // Ideal: clear buying intent and topically relevant.
+      name: 'strict',
+      pick: () =>
+        scored.filter(
+          (p) =>
+            (p.intent === 'buying_intent' || p.intent === 'advice_seeking') &&
+            p.relevance >= RELEVANCE_THRESHOLD,
+        ),
+    },
+    {
+      // Right intent, weaker topical match.
+      name: 'intent_only',
+      pick: () =>
+        scored.filter(
+          (p) => p.intent === 'buying_intent' || p.intent === 'advice_seeking',
+        ),
+    },
+    {
+      // Relevant to the query even if the intent classifier disagreed.
+      name: 'relevance_only',
+      pick: () => scored.filter((p) => p.relevance >= RELEVANCE_THRESHOLD / 2),
+    },
+    {
+      // Last resort: the closest matches we retrieved, ranked.
+      name: 'best_effort',
+      pick: () => scored.slice(),
+    },
+  ];
+
+  let survivors: typeof scored = [];
+  let tier = 'strict';
+  for (const t of TIERS) {
+    const picked = t.pick().sort(byRelevance);
+    if (picked.length > 0) {
+      survivors = picked.slice(0, maxPosts);
+      tier = t.name;
+      break;
+    }
+  }
 
   // ── Sentiment + role + reply for surviving leads (parallel) ──────────
   const enriched = await Promise.all(
@@ -133,6 +202,10 @@ export async function POST(req: NextRequest) {
       passed_intent: scored.filter((p) => p.intent === 'buying_intent').length,
       passed_relevance: survivors.length,
       final: enriched.length,
+      // Which filter tier produced these results. "strict" means they met
+      // both the intent and relevance bars; anything else means the filter
+      // was widened to avoid returning an empty list.
+      tier,
     },
     quota: { remaining: rl.remaining, limit: rl.limit },
   });
