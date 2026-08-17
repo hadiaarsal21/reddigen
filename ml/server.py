@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -45,6 +46,13 @@ _role_pipeline = None
 _sentiment_pipeline = None
 _reply_pipeline = None
 
+# Uvicorn serves requests from a thread pool, so several can reach a loader at
+# once. Without this lock each thread starts its own load of the same
+# checkpoint: wasted memory, minutes of duplicated work, and an import race in
+# transformers that surfaces as "cannot import name 'pipeline'". One loader at
+# a time; whoever arrives second finds the cached model already populated.
+_LOAD_LOCK = threading.Lock()
+
 
 def _try_load_intent():
     """Load the fine-tuned intent classifier if it exists on disk."""
@@ -54,15 +62,18 @@ def _try_load_intent():
     ckpt = MODELS_DIR / "intent"
     if not ckpt.exists():
         return None
-    try:
-        from transformers import pipeline  # imported lazily so the server
-        _intent_pipeline = pipeline(          # boots even without HF
-            "text-classification", model=str(ckpt), top_k=1
-        )
-        print(f"[server] Loaded intent model from {ckpt}")
-    except Exception as exc:
-        print(f"[server] Failed to load intent model: {exc}")
-        _intent_pipeline = None
+    with _LOAD_LOCK:
+        if _intent_pipeline is not None:  # another thread finished while we waited
+            return _intent_pipeline
+        try:
+            from transformers import pipeline  # imported lazily so the server
+            _intent_pipeline = pipeline(          # boots even without HF
+                "text-classification", model=str(ckpt), top_k=1
+            )
+            print(f"[server] Loaded intent model from {ckpt}")
+        except Exception as exc:
+            print(f"[server] Failed to load intent model: {exc}")
+            _intent_pipeline = None
     return _intent_pipeline
 
 
@@ -73,13 +84,16 @@ def _try_load_relevance():
     ckpt = MODELS_DIR / "relevance"
     if not ckpt.exists():
         return None
-    try:
-        from sentence_transformers import SentenceTransformer
-        _relevance_encoder = SentenceTransformer(str(ckpt))
-        print(f"[server] Loaded relevance encoder from {ckpt}")
-    except Exception as exc:
-        print(f"[server] Failed to load relevance model: {exc}")
-        _relevance_encoder = None
+    with _LOAD_LOCK:
+        if _relevance_encoder is not None:  # another thread finished while we waited
+            return _relevance_encoder
+        try:
+            from sentence_transformers import SentenceTransformer
+            _relevance_encoder = SentenceTransformer(str(ckpt))
+            print(f"[server] Loaded relevance encoder from {ckpt}")
+        except Exception as exc:
+            print(f"[server] Failed to load relevance model: {exc}")
+            _relevance_encoder = None
     return _relevance_encoder
 
 
@@ -90,15 +104,18 @@ def _try_load_role():
     ckpt = MODELS_DIR / "role"
     if not ckpt.exists():
         return None
-    try:
-        from transformers import pipeline
-        _role_pipeline = pipeline(
-            "text-classification", model=str(ckpt), top_k=1
-        )
-        print(f"[server] Loaded role model from {ckpt}")
-    except Exception as exc:
-        print(f"[server] Failed to load role model: {exc}")
-        _role_pipeline = None
+    with _LOAD_LOCK:
+        if _role_pipeline is not None:  # another thread finished while we waited
+            return _role_pipeline
+        try:
+            from transformers import pipeline
+            _role_pipeline = pipeline(
+                "text-classification", model=str(ckpt), top_k=1
+            )
+            print(f"[server] Loaded role model from {ckpt}")
+        except Exception as exc:
+            print(f"[server] Failed to load role model: {exc}")
+            _role_pipeline = None
     return _role_pipeline
 
 
@@ -125,63 +142,66 @@ def _try_load_sentiment():
     ckpt = MODELS_DIR / "sentiment"
     if not ckpt.exists():
         return None
-    try:
-        import torch
-        import torch.nn as nn
-        from transformers import AutoConfig, AutoModel, AutoTokenizer
+    with _LOAD_LOCK:
+        if _sentiment_pipeline is not None:  # another thread finished while we waited
+            return _sentiment_pipeline
+        try:
+            import torch
+            import torch.nn as nn
+            from transformers import AutoConfig, AutoModel, AutoTokenizer
 
-        class _MultiTask(nn.Module):
-            """Inference-only mirror of train_sentiment.MultiTaskModel."""
+            class _MultiTask(nn.Module):
+                """Inference-only mirror of train_sentiment.MultiTaskModel."""
 
-            def __init__(self, config):
-                super().__init__()
-                self.encoder = AutoModel.from_config(config)
-                self.dropout = nn.Dropout(0.1)
-                self.sentiment_head = nn.Linear(config.hidden_size, len(SENTIMENT_LABELS))
-                self.urgency_head = nn.Linear(config.hidden_size, len(URGENCY_LABELS))
+                def __init__(self, config):
+                    super().__init__()
+                    self.encoder = AutoModel.from_config(config)
+                    self.dropout = nn.Dropout(0.1)
+                    self.sentiment_head = nn.Linear(config.hidden_size, len(SENTIMENT_LABELS))
+                    self.urgency_head = nn.Linear(config.hidden_size, len(URGENCY_LABELS))
 
-            def forward(self, input_ids, attention_mask):
-                out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-                pooled = self.dropout(out.last_hidden_state[:, 0])
-                return self.sentiment_head(pooled), self.urgency_head(pooled)
+                def forward(self, input_ids, attention_mask):
+                    out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+                    pooled = self.dropout(out.last_hidden_state[:, 0])
+                    return self.sentiment_head(pooled), self.urgency_head(pooled)
 
-        cfg = AutoConfig.from_pretrained(ckpt)
-        model = _MultiTask(cfg)
+            cfg = AutoConfig.from_pretrained(ckpt)
+            model = _MultiTask(cfg)
 
-        state = None
-        safet = ckpt / "model.safetensors"
-        if safet.exists():
-            from safetensors.torch import load_file
+            state = None
+            safet = ckpt / "model.safetensors"
+            if safet.exists():
+                from safetensors.torch import load_file
 
-            state = load_file(str(safet))
-        else:
-            bin_path = ckpt / "pytorch_model.bin"
-            if bin_path.exists():
-                state = torch.load(str(bin_path), map_location="cpu")
-        if state is None:
-            raise FileNotFoundError("no model weights found in checkpoint")
+                state = load_file(str(safet))
+            else:
+                bin_path = ckpt / "pytorch_model.bin"
+                if bin_path.exists():
+                    state = torch.load(str(bin_path), map_location="cpu")
+            if state is None:
+                raise FileNotFoundError("no model weights found in checkpoint")
 
-        missing, unexpected = model.load_state_dict(state, strict=False)
-        # Both heads must be present, or predictions are meaningless.
-        head_keys = [
-            "sentiment_head.weight", "sentiment_head.bias",
-            "urgency_head.weight", "urgency_head.bias",
-        ]
-        absent = [k for k in head_keys if k in missing]
-        if absent:
-            raise RuntimeError(f"checkpoint is missing the task heads: {absent}")
+            missing, unexpected = model.load_state_dict(state, strict=False)
+            # Both heads must be present, or predictions are meaningless.
+            head_keys = [
+                "sentiment_head.weight", "sentiment_head.bias",
+                "urgency_head.weight", "urgency_head.bias",
+            ]
+            absent = [k for k in head_keys if k in missing]
+            if absent:
+                raise RuntimeError(f"checkpoint is missing the task heads: {absent}")
 
-        model.eval()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        model.to(device)
-        tok = AutoTokenizer.from_pretrained(ckpt)
-        _sentiment_pipeline = {"model": model, "tokenizer": tok, "device": device}
-        print(f"[server] Loaded multi-task sentiment model from {ckpt} on {device}")
-        if missing:
-            print(f"[server]   (non-head keys newly initialised: {len(missing)})")
-    except Exception as exc:
-        print(f"[server] Failed to load sentiment model: {exc}")
-        _sentiment_pipeline = None
+            model.eval()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model.to(device)
+            tok = AutoTokenizer.from_pretrained(ckpt)
+            _sentiment_pipeline = {"model": model, "tokenizer": tok, "device": device}
+            print(f"[server] Loaded multi-task sentiment model from {ckpt} on {device}")
+            if missing:
+                print(f"[server]   (non-head keys newly initialised: {len(missing)})")
+        except Exception as exc:
+            print(f"[server] Failed to load sentiment model: {exc}")
+            _sentiment_pipeline = None
     return _sentiment_pipeline
 
 
@@ -213,41 +233,44 @@ def _try_load_reply():
     ckpt = MODELS_DIR / "reply"
     if not ckpt.exists():
         return None
-    try:
-        import torch
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    with _LOAD_LOCK:
+        if _reply_pipeline is not None:  # another thread finished while we waited
+            return _reply_pipeline
+        try:
+            import torch
+            from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-        tok = AutoTokenizer.from_pretrained(str(ckpt))
-        model = AutoModelForSeq2SeqLM.from_pretrained(str(ckpt))
+            tok = AutoTokenizer.from_pretrained(str(ckpt))
+            model = AutoModelForSeq2SeqLM.from_pretrained(str(ckpt))
 
-        # T5 ties encoder.embed_tokens and decoder.embed_tokens to `shared`.
-        # Merging the LoRA adapter writes `shared` and `lm_head` with different
-        # values, so transformers declines to tie them and reports the two
-        # embed_tokens as MISSING — leaving them on the meta device. Any later
-        # .to() then fails with "Cannot copy out of meta tensor". Re-point them
-        # at `shared`, which is what the tie would have done.
-        if hasattr(model, "shared"):
-            if hasattr(model, "encoder"):
-                model.encoder.embed_tokens = model.shared
-            if hasattr(model, "decoder"):
-                model.decoder.embed_tokens = model.shared
+            # T5 ties encoder.embed_tokens and decoder.embed_tokens to `shared`.
+            # Merging the LoRA adapter writes `shared` and `lm_head` with different
+            # values, so transformers declines to tie them and reports the two
+            # embed_tokens as MISSING — leaving them on the meta device. Any later
+            # .to() then fails with "Cannot copy out of meta tensor". Re-point them
+            # at `shared`, which is what the tie would have done.
+            if hasattr(model, "shared"):
+                if hasattr(model, "encoder"):
+                    model.encoder.embed_tokens = model.shared
+                if hasattr(model, "decoder"):
+                    model.decoder.embed_tokens = model.shared
 
-        meta = [n for n, p in model.named_parameters() if p.device.type == "meta"]
-        if meta:
-            raise RuntimeError(
-                f"{len(meta)} parameter(s) still on the meta device after re-tying "
-                f"(first: {meta[0]}). The checkpoint is incomplete."
-            )
+            meta = [n for n, p in model.named_parameters() if p.device.type == "meta"]
+            if meta:
+                raise RuntimeError(
+                    f"{len(meta)} parameter(s) still on the meta device after re-tying "
+                    f"(first: {meta[0]}). The checkpoint is incomplete."
+                )
 
-        model.eval()
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        if device != "cpu":
-            model.to(device)  # already on CPU otherwise; .to() is a no-op cost
-        _reply_pipeline = {"model": model, "tokenizer": tok, "device": device}
-        print(f"[server] Loaded reply model from {ckpt} on {device}")
-    except Exception as exc:
-        print(f"[server] Failed to load reply model: {exc}")
-        _reply_pipeline = None
+            model.eval()
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            if device != "cpu":
+                model.to(device)  # already on CPU otherwise; .to() is a no-op cost
+            _reply_pipeline = {"model": model, "tokenizer": tok, "device": device}
+            print(f"[server] Loaded reply model from {ckpt} on {device}")
+        except Exception as exc:
+            print(f"[server] Failed to load reply model: {exc}")
+            _reply_pipeline = None
     return _reply_pipeline
 
 
@@ -296,6 +319,18 @@ app = FastAPI(
 class HealthResp(BaseModel):
     ok: bool = True
     models_loaded: dict[str, bool]
+
+
+@app.get("/healthz")
+def healthz():
+    """
+    Liveness only. Deliberately does NOT touch the models.
+
+    GET / reports which checkpoints are loaded, and answering that question
+    means attempting to load them. Anything polling for readiness must use
+    this instead, or the poll itself kicks off repeated multi-gigabyte loads.
+    """
+    return {"ok": True, "service": "reddigen-ml"}
 
 
 @app.get("/", response_model=HealthResp)
