@@ -102,7 +102,23 @@ def _try_load_role():
     return _role_pipeline
 
 
+SENTIMENT_LABELS = ["positive", "neutral", "negative"]
+URGENCY_LABELS = ["low", "medium", "high"]
+
+
 def _try_load_sentiment():
+    """
+    Load the multi-task sentiment + urgency model.
+
+    This one cannot go through `pipeline("text-classification")`. The
+    checkpoint is a custom two-head architecture (shared encoder ->
+    sentiment_head + urgency_head) defined in train_sentiment.py, and a
+    standard sequence-classification pipeline silently ignores both heads:
+    it exposes LABEL_0/LABEL_1... instead of the real class names, so every
+    lookup misses and the endpoint returns a constant answer.
+
+    Instead, rebuild the architecture and load the weights directly.
+    """
     global _sentiment_pipeline
     if _sentiment_pipeline is not None:
         return _sentiment_pipeline
@@ -110,11 +126,59 @@ def _try_load_sentiment():
     if not ckpt.exists():
         return None
     try:
-        from transformers import pipeline
-        _sentiment_pipeline = pipeline(
-            "text-classification", model=str(ckpt), top_k=None
-        )
-        print(f"[server] Loaded sentiment model from {ckpt}")
+        import torch
+        import torch.nn as nn
+        from transformers import AutoConfig, AutoModel, AutoTokenizer
+
+        class _MultiTask(nn.Module):
+            """Inference-only mirror of train_sentiment.MultiTaskModel."""
+
+            def __init__(self, config):
+                super().__init__()
+                self.encoder = AutoModel.from_config(config)
+                self.dropout = nn.Dropout(0.1)
+                self.sentiment_head = nn.Linear(config.hidden_size, len(SENTIMENT_LABELS))
+                self.urgency_head = nn.Linear(config.hidden_size, len(URGENCY_LABELS))
+
+            def forward(self, input_ids, attention_mask):
+                out = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
+                pooled = self.dropout(out.last_hidden_state[:, 0])
+                return self.sentiment_head(pooled), self.urgency_head(pooled)
+
+        cfg = AutoConfig.from_pretrained(ckpt)
+        model = _MultiTask(cfg)
+
+        state = None
+        safet = ckpt / "model.safetensors"
+        if safet.exists():
+            from safetensors.torch import load_file
+
+            state = load_file(str(safet))
+        else:
+            bin_path = ckpt / "pytorch_model.bin"
+            if bin_path.exists():
+                state = torch.load(str(bin_path), map_location="cpu")
+        if state is None:
+            raise FileNotFoundError("no model weights found in checkpoint")
+
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        # Both heads must be present, or predictions are meaningless.
+        head_keys = [
+            "sentiment_head.weight", "sentiment_head.bias",
+            "urgency_head.weight", "urgency_head.bias",
+        ]
+        absent = [k for k in head_keys if k in missing]
+        if absent:
+            raise RuntimeError(f"checkpoint is missing the task heads: {absent}")
+
+        model.eval()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        tok = AutoTokenizer.from_pretrained(ckpt)
+        _sentiment_pipeline = {"model": model, "tokenizer": tok, "device": device}
+        print(f"[server] Loaded multi-task sentiment model from {ckpt} on {device}")
+        if missing:
+            print(f"[server]   (non-head keys newly initialised: {len(missing)})")
     except Exception as exc:
         print(f"[server] Failed to load sentiment model: {exc}")
         _sentiment_pipeline = None
@@ -302,13 +366,18 @@ class SentimentResp(BaseModel):
 
 @app.post("/predict-sentiment", response_model=SentimentResp)
 def predict_sentiment(req: SentimentReq):
-    pipe = _try_load_sentiment()
-    if pipe is not None:
-        # Trained multi-task head returns per-label scores; take the top.
-        outs = pipe(req.text[:2000])[0]
-        by_label = {o["label"]: o["score"] for o in outs}
-        sent = max(("positive", "neutral", "negative"), key=lambda k: by_label.get(k, 0))
-        urg = max(("low", "medium", "high"), key=lambda k: by_label.get(k, 0))
+    bundle = _try_load_sentiment()
+    if bundle is not None:
+        import torch
+
+        model, tok, device = bundle["model"], bundle["tokenizer"], bundle["device"]
+        enc = tok(
+            req.text[:2000], return_tensors="pt", truncation=True, max_length=256
+        ).to(device)
+        with torch.no_grad():
+            s_logits, u_logits = model(enc["input_ids"], enc["attention_mask"])
+        sent = SENTIMENT_LABELS[int(s_logits.argmax(-1))]
+        urg = URGENCY_LABELS[int(u_logits.argmax(-1))]
         return SentimentResp(sentiment=sent, urgency=urg)
     # Stub
     pos = _matches(POSITIVE_PATTERNS, req.text)
