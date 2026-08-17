@@ -51,45 +51,64 @@ reddigen/
 
 ---
 
-## Quick start (5 minutes to a working demo)
+## Quick start
 
-Open two terminals.
-
-### Terminal 1 — Set up and run the ML server
+### One-time setup
 
 ```bash
-# From the project root
-cd reddigen
-
-# Install Python deps (creates the FastAPI server + all training deps)
-pip install -r ml/requirements.txt
-
-# Start the model server on http://localhost:8000
-python ml/server.py
-```
-
-On first boot, the server will report which trained checkpoints are loaded.
-If you haven't trained any yet, every endpoint uses a rule-based **stub**
-that returns plausible outputs — enough for the whole app to work
-end-to-end. Once you drop trained checkpoints into `ml/models/<name>/`, the
-server automatically switches to real inference on the next request.
-
-### Terminal 2 — Set up and run the Next.js app
-
-```bash
-# From the same project root
-cp .env.example .env
+# Node side
 npm install
+cp .env.example .env          # Windows: copy .env.example .env
 npx prisma generate
-npx prisma db push        # creates the SQLite file at prisma/dev.db
+npx prisma db push            # creates the SQLite database
 
-npm run dev               # http://localhost:3000
+# Python side
+python -m venv .venv
+.venv/bin/python -m pip install -r ml/requirements.txt
+# Windows: .venv\Scripts\python.exe -m pip install -r ml/requirements.txt
 ```
 
-Open <http://localhost:3000>, go to **Dashboard**, type any query (e.g.
-"python freelancer for automation") and press **Run search**. The pipeline
+### Run it
+
+```bash
+npm start
+```
+
+That is the whole thing. One command starts both the FastAPI ML server on
+`:8000` and the Next.js app on `:3000`, waits until each is actually
+answering, and shuts both down together on Ctrl+C.
+
+```
+ReddiGen (production)
+
+[ml]  starting FastAPI on port 8000
+[ml]  ready on http://localhost:8000
+[web] starting Next.js on port 3000
+[web]  ✓ Ready in 1150ms
+
+  ReddiGen is running
+  http://localhost:3000
+```
+
+Use `npm run dev` for the same thing with hot reload.
+
+The launcher checks its prerequisites first, so a missing virtualenv or an
+occupied port produces one clear message rather than a half-started stack. It
+creates `.env` from the example if absent, and runs `next build` on the first
+production start.
+
+Open <http://localhost:3000>, go to **Search**, type what you sell (e.g.
+"python freelancer for automation") and press **Run Search**. The pipeline
 retrieves Reddit posts, runs them through all five models, and shows scored
-leads with drafted replies.
+leads with drafted replies you can copy straight into the thread.
+
+### Running without trained models
+
+With `ml/models/` empty, every endpoint falls back to a rule-based **stub**
+that returns plausible output, so the whole app works end to end before any
+training has happened. Drop trained checkpoints into `ml/models/<name>/` and
+the server switches to real inference on the next request, no restart needed.
+See [TRAINING.md](TRAINING.md).
 
 ---
 
@@ -192,13 +211,20 @@ Full detail: [`MODELS-GUIDE.md`](MODELS-GUIDE.md).
 
 | Command | Purpose |
 |---|---|
-| `npm run dev` | Start Next.js on `:3000` |
-| `npm run build` | Production build |
+| **`npm start`** | **Start everything: ML server + web app** |
+| `npm run dev` | Same, with hot reload |
+| `npm run build` | Production build only |
+| `npm run web` | Web app alone, no ML server |
+| `npm run ml:serve` | ML server alone |
 | `npm run ml:setup` | Install Python deps |
-| `npm run ml:serve` | Start FastAPI on `:8000` |
 | `npm run db:push` | Sync SQLite schema |
 | `npm run db:studio` | Open Prisma Studio (visual DB browser) |
+| `python ml/data/generate_dataset.py` | Build the training corpora |
 | `python ml/train_<task>.py` | Train the model for `<task>` |
+| `python ml/import_models.py <zip>` | Install checkpoints trained on Kaggle/Colab |
+| `mlflow ui --backend-store-uri sqlite:///mlflow.db` | Browse tracked experiments |
+
+Ports are configurable: `PORT` for the web app, `ML_PORT` for the ML server.
 
 ---
 
