@@ -112,10 +112,21 @@ def main() -> int:
         for name in skipped:
             print(f"  skipped    {dest / name} already exists (use --force to replace)")
 
-        missing = [m for m in EXPECTED if m not in models]
-        if missing:
-            print(f"\nnot in archive: {', '.join(missing)} "
-                  f"— those endpoints keep using rule-based stubs.")
+        # Report only what is genuinely absent. A partial archive (e.g. one
+        # that retrains two models) is normal, and the models it omits may
+        # already be installed from an earlier import.
+        absent = [m for m in EXPECTED if m not in models]
+        already, stubbed = [], []
+        for name in absent:
+            target = dest / name
+            (already if target.is_dir() and any(target.iterdir()) else stubbed).append(name)
+
+        if already:
+            print(f"\nnot in archive but already installed: {', '.join(already)} "
+                  f"— left untouched.")
+        if stubbed:
+            print(f"\nnot installed: {', '.join(stubbed)} "
+                  f"— those endpoints use rule-based stubs.")
 
     print("\nDone. Restart is not required — the server loads checkpoints lazily.")
     print("Check with:  curl http://localhost:8000/")

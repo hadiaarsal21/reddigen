@@ -185,7 +185,28 @@ def _try_load_sentiment():
     return _sentiment_pipeline
 
 
+# Must match PROMPT in train_reply.py exactly. The model was fine-tuned on
+# this template; feeding it a different one degrades output quality badly,
+# because the tone token and field order are what condition the generation.
+REPLY_PROMPT = (
+    "Write a natural, helpful Reddit reply.\n"
+    "tone: {tone}\n"
+    "our offer: {query}\n"
+    "post title: {title}\n"
+    "post body: {body}\n"
+    "reply:"
+)
+
+
 def _try_load_reply():
+    """
+    Load the merged FLAN-T5 reply generator.
+
+    Loaded directly rather than through pipeline("text2text-generation"):
+    transformers 5.x removed that task alias entirely, so the pipeline call
+    raises KeyError and the endpoint silently falls back to the stub.
+    AutoModelForSeq2SeqLM works on both 4.x and 5.x.
+    """
     global _reply_pipeline
     if _reply_pipeline is not None:
         return _reply_pipeline
@@ -193,9 +214,15 @@ def _try_load_reply():
     if not ckpt.exists():
         return None
     try:
-        from transformers import pipeline
-        _reply_pipeline = pipeline("text2text-generation", model=str(ckpt))
-        print(f"[server] Loaded reply model from {ckpt}")
+        import torch
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        tok = AutoTokenizer.from_pretrained(str(ckpt))
+        model = AutoModelForSeq2SeqLM.from_pretrained(str(ckpt)).eval()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+        _reply_pipeline = {"model": model, "tokenizer": tok, "device": device}
+        print(f"[server] Loaded reply model from {ckpt} on {device}")
     except Exception as exc:
         print(f"[server] Failed to load reply model: {exc}")
         _reply_pipeline = None
@@ -411,14 +438,32 @@ TONE_OPENERS = {
 
 @app.post("/generate-reply", response_model=ReplyResp)
 def generate_reply(req: ReplyReq):
-    pipe = _try_load_reply()
-    if pipe is not None:
-        prompt = (
-            f"tone: {req.tone}\nquery: {req.query}\n"
-            f"post: {req.post_title}\n{req.post_body[:1500]}"
+    bundle = _try_load_reply()
+    if bundle is not None:
+        import torch
+
+        model, tok, device = bundle["model"], bundle["tokenizer"], bundle["device"]
+        prompt = REPLY_PROMPT.format(
+            tone=req.tone,
+            query=req.query,
+            title=req.post_title,
+            body=req.post_body[:1200],
         )
-        out = pipe(prompt, max_new_tokens=140, do_sample=True, temperature=0.7)[0]
-        return ReplyResp(reply=out["generated_text"].strip())
+        enc = tok(
+            prompt, return_tensors="pt", truncation=True, max_length=512
+        ).to(device)
+        with torch.no_grad():
+            out = model.generate(
+                **enc,
+                max_new_tokens=140,
+                num_beams=4,
+                no_repeat_ngram_size=3,
+                early_stopping=True,
+            )
+        text = tok.decode(out[0], skip_special_tokens=True).strip()
+        if text:
+            return ReplyResp(reply=text)
+        # Empty generation: fall through to the stub rather than return "".
     # Stub: templated reply that references the post
     opener = TONE_OPENERS.get(req.tone, TONE_OPENERS["helpful"])
     hook = req.post_title.strip().rstrip("?").rstrip(".")
