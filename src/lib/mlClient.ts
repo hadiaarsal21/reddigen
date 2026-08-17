@@ -4,13 +4,24 @@
 
 const BASE = process.env.ML_SERVICE_URL || 'http://localhost:8000';
 
-async function post<TReq, TRes>(path: string, body: TReq): Promise<TRes | null> {
+// Classification is a single forward pass; generation runs an autoregressive
+// beam search and is an order of magnitude slower, especially on CPU where
+// several requests compete for the same cores. One flat timeout silently
+// dropped every reply, so budgets are per endpoint.
+const DEFAULT_TIMEOUT_MS = 45_000;
+const GENERATE_TIMEOUT_MS = 180_000;
+
+async function post<TReq, TRes>(
+  path: string,
+  body: TReq,
+  timeoutMs: number = DEFAULT_TIMEOUT_MS,
+): Promise<TRes | null> {
   try {
     const res = await fetch(`${BASE}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
       console.warn(`[ml] ${path} → HTTP ${res.status}`);
@@ -74,12 +85,16 @@ export const generateReply = (
   post<
     { query: string; post_title: string; post_body: string; tone: string },
     ReplyResp
-  >('/generate-reply', {
-    query,
-    post_title: postTitle,
-    post_body: postBody,
-    tone,
-  });
+  >(
+    '/generate-reply',
+    {
+      query,
+      post_title: postTitle,
+      post_body: postBody,
+      tone,
+    },
+    GENERATE_TIMEOUT_MS,
+  );
 
 export async function isServerReachable(): Promise<boolean> {
   try {
