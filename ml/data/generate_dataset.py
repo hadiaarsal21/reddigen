@@ -397,30 +397,41 @@ def gen_sentiment(rng: random.Random, n: int) -> list[dict]:
 
 # ── Model 5: reply pairs ────────────────────────────────────────────────
 
+# Gold replies are written the way a person actually comments on Reddit:
+#
+#   - no em or en dashes, which are the clearest tell of generated text
+#   - no claims the sender cannot back up ("I've delivered similar projects"
+#     invites the model to assert a track record it knows nothing about)
+#   - offer help and invite a reply, rather than pitch
+#
+# The model imitates these patterns closely, so anything sloppy here shows up
+# verbatim in production output.
 REPLY_TEMPLATES = {
     "helpful": [
-        "Hey! I've helped a few {ctx} with exactly this. Happy to share what worked — "
-        "the biggest win is usually {task}. Feel free to DM if you want specifics.",
-        "I do {svc} work and this comes up a lot. Quick tip: start with {task}. "
-        "Glad to talk it through if useful.",
+        "I work on {svc}, so this is familiar ground. If it helps, {task} is usually "
+        "the thing to sort out first. Happy to go into detail if you want.",
+        "Been through this a few times with {ctx}. The part that tends to matter most "
+        "is {task}. Glad to talk it through, just reply here.",
     ],
     "professional": [
-        "Hi — I specialise in {svc} for {ctx}. I've delivered similar projects and "
-        "can share relevant case studies. Happy to arrange a short call to scope this out.",
-        "Good afternoon. This is squarely in my area ({svc}). I'd suggest beginning with "
-        "{task}. I can send over a proposal if that would be helpful.",
+        "Hi. My focus is {svc}, mainly with {ctx}. Based on what you've described, "
+        "{task} would be the first thing I'd look at. Happy to discuss if useful.",
+        "This falls within what I do ({svc}). I'd want a bit more detail before "
+        "suggesting a specific approach, though {task} is usually the starting point. "
+        "Happy to talk it through.",
     ],
     "casual": [
-        "oh this is right up my alley — been doing {svc} stuff for {ctx} for a while. "
-        "honestly {task} is where I'd start. give me a shout if you want a hand",
-        "hey! I do this kind of thing. {task} first, everything else after. dm me if you want",
+        "hey, this is pretty much what I do. {task} first, honestly. everything else "
+        "gets easier after that. give me a shout if you want a hand",
+        "oh I've dealt with this on a {ctx} before. {task} is where I'd start. "
+        "happy to help if you want, just reply",
     ],
     "empathetic": [
-        "That sounds really frustrating — a lot of people hit the same wall with their {ctx}. "
-        "You're not doing anything wrong. If it helps, {task} usually unblocks things. "
-        "Happy to help however I can.",
-        "I know how draining this gets. I've worked with {ctx} in the same spot. "
-        "Start with {task} and it gets much more manageable. Here if you need a hand.",
+        "That sounds like a frustrating spot to be in, and it's more common than you'd "
+        "think with {ctx}. Usually {task} is what unblocks it. Happy to help however "
+        "is useful, no pressure.",
+        "I know how draining this gets. I've seen {ctx} stuck in the same place. "
+        "Starting with {task} tends to make it manageable. Here if you want a hand.",
     ],
 }
 
