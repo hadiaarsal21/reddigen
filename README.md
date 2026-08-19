@@ -228,6 +228,57 @@ Ports are configurable: `PORT` for the web app, `ML_PORT` for the ML server.
 
 ---
 
+## Troubleshooting
+
+**`npm.ps1 cannot be loaded because running scripts is disabled on this system`**
+
+Windows PowerShell blocks script files by default, and npm ships its shim as
+`npm.ps1`. Allow local scripts for your own account, which needs no admin
+rights:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned
+```
+
+Open a new terminal afterwards. `RemoteSigned` runs local scripts and still
+requires a signature on anything downloaded. To avoid changing the policy at
+all, call the batch shim instead: `npm.cmd start`, or skip npm entirely with
+`node scripts/start.js`.
+
+**`Could not read package.json`**
+
+You are one directory too high. `package.json` is in the repository root:
+
+```powershell
+cd reddigen-local
+npm start
+```
+
+**`Port 3000 is already in use`**
+
+The launcher refuses to start rather than colliding with whatever is there.
+Find the owner with `netstat -ano | findstr :3000` (`lsof -i :3000` on
+macOS/Linux) and stop it, or run on another port: `$env:PORT=3100; npm start`.
+
+**`git` / `node` / `python` not recognised, straight after installing them**
+
+Terminals read PATH when they start. Open a new one, or restart your editor so
+its integrated terminal picks up the change.
+
+**The ML server takes ~30s before the first search**
+
+Expected. Checkpoints load lazily on first use, and all five total about 2.2 GB
+on CPU. Subsequent requests are fast. `npm start` reports ready as soon as the
+service is live, without waiting for the models.
+
+**Searches return few or no leads**
+
+Reddit rate-limits anonymous requests. Wait a minute and retry. The app already
+falls back from Reddit's JSON API to RSS feeds because the JSON endpoints
+return 403 to anonymous callers.
+
+---
+
 ## License
 
 MIT — see LICENSE.
