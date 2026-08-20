@@ -34,22 +34,9 @@ export function ResultNotice({ kind, title, children }: Props) {
   );
 }
 
-/** Human wording for each relaxation tier returned by /api/search. */
-export const TIER_NOTES: Record<string, { title: string; body: string } | null> = {
-  strict: null, // exact matches: nothing to explain
-  intent_only: {
-    title: 'Widened to intent matches',
-    body:
-      'No posts cleared both the intent and relevance bars, so these are posts showing buying or advice-seeking intent, ranked by how closely they match your query.',
-  },
-  relevance_only: {
-    title: 'Widened to topical matches',
-    body:
-      'No posts showed clear buying intent, so these are the ones most related to your query. Expect more browsing and fewer ready buyers.',
-  },
-  best_effort: {
-    title: 'Showing closest matches',
-    body:
-      'Nothing matched the filters, so these are the closest posts retrieved, ranked by relevance. Treat them as leads to skim rather than qualified ones.',
-  },
-};
+/**
+ * Search no longer relaxes its filter to fill a list. It keeps searching from
+ * more angles until it has the requested number of genuinely qualifying
+ * leads, and reports a shortfall rather than padding with weaker matches.
+ * The dashboard builds that message from the stats block.
+ */

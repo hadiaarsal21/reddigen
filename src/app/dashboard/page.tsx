@@ -6,7 +6,7 @@ import { ChipSelect } from '@/components/ChipSelect';
 import { SearchPanel } from '@/components/SearchPanel';
 import { QuotaNote } from '@/components/QuotaNote';
 import { CopyButton } from '@/components/CopyButton';
-import { ResultNotice, TIER_NOTES } from '@/components/ResultNotice';
+import { ResultNotice } from '@/components/ResultNotice';
 import { Icon } from '@/components/Icon';
 import { DEFAULT_POST_LIMIT } from '@/lib/limits';
 import { buildLimitOptions, TIME_OPTIONS, TONE_OPTIONS } from '@/lib/options';
@@ -30,7 +30,18 @@ interface ScoredPost {
   saved?: boolean;
 }
 
-const LIMIT_OPTIONS = buildLimitOptions('posts');
+const LIMIT_OPTIONS = buildLimitOptions('leads');
+
+interface SearchStats {
+  requested: number;
+  delivered: number;
+  exact?: boolean;
+  fetched: number;
+  scored: number;
+  rounds: number;
+  qualified?: number;
+  rejections?: Record<string, number>;
+}
 
 const EXAMPLES = [
   'looking for a python expert',
@@ -47,7 +58,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(false);
   const [posts, setPosts] = useState<ScoredPost[]>([]);
   const [error, setError] = useState('');
-  const [tier, setTier] = useState('strict');
+  const [stats, setStats] = useState<SearchStats | null>(null);
   const [reason, setReason] = useState('');
   const [searched, setSearched] = useState(false);
   const [quota, setQuota] = useState<{ remaining: number; limit: number } | null>(null);
@@ -75,7 +86,7 @@ export default function DashboardPage() {
         throw new Error(data.error || `Search failed (${res.status})`);
       }
       setPosts(data.posts || []);
-      setTier(data.stats?.tier ?? 'strict');
+      setStats(data.stats ?? null);
       setReason(data.reason ?? '');
       if (data.quota) setQuota(data.quota);
     } catch (err: any) {
@@ -173,7 +184,7 @@ export default function DashboardPage() {
           <QuotaNote
             quota={quota}
             unit="searches"
-            note="Higher post counts scan more of Reddit but take longer."
+            note="Asking for more leads searches Reddit from more angles, so it takes longer."
           />
         }
       />
@@ -185,15 +196,23 @@ export default function DashboardPage() {
       )}
 
       {!error && !loading && searched && posts.length === 0 && (
-        <ResultNotice kind="empty" title="Reddit returned no posts for this query">
-          {reason ||
-            'Try different wording, a longer time window, or a higher post count.'}
+        <ResultNotice kind="empty" title="No matching leads found">
+          {reason || 'Try different wording, or a longer time window.'}
         </ResultNotice>
       )}
 
-      {!error && posts.length > 0 && TIER_NOTES[tier] && (
-        <ResultNotice kind="info" title={TIER_NOTES[tier]!.title}>
-          {TIER_NOTES[tier]!.body}
+      {/* Short of the requested number. Say why rather than padding the list
+          with posts that do not match, which is the whole point of the gate. */}
+      {!error && !loading && stats && posts.length > 0 && !stats.exact && (
+        <ResultNotice
+          kind="info"
+          title={`Found ${stats.delivered} of the ${stats.requested} leads you asked for`}
+        >
+          Searched {stats.rounds} different way{stats.rounds === 1 ? '' : 's'} and
+          checked {stats.scored} posts. Only {stats.delivered} showed real buying
+          intent for this topic, so that is all you are seeing. The rest were
+          filled with unrelated posts in earlier versions; now they are left out.
+          Try broader wording or a longer time window for more.
         </ResultNotice>
       )}
 
