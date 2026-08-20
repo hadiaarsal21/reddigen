@@ -20,8 +20,8 @@ export const TIME_OPTIONS = [
   { value: 'year', label: 'Past year' },
 ];
 
-/** Build a post-count option list, optionally capped for heavier features. */
-export function buildLimitOptions(noun = 'posts', max = Infinity) {
+/** Build a count option list, optionally capped for heavier features. */
+export function buildLimitOptions(noun = 'leads', max = Infinity) {
   return POST_LIMIT_OPTIONS.filter((n) => n <= max).map((n) => ({
     value: String(n),
     label: `${n} ${noun}`,

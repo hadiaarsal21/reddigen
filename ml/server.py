@@ -400,7 +400,14 @@ def score_relevance(req: RelevanceReq):
         import numpy as np
         q_vec = enc.encode(req.query, convert_to_numpy=True, normalize_embeddings=True)
         d_vec = enc.encode(text, convert_to_numpy=True, normalize_embeddings=True)
-        return RelevanceResp(score=float(np.dot(q_vec, d_vec)))
+        # Cosine similarity of normalised vectors spans [-1, 1], but the
+        # response model declares [0, 1]. A negative value means the texts
+        # point away from each other, which for a relevance score is simply
+        # "unrelated" — so clamp rather than let pydantic reject the response.
+        # Unclamped, those posts returned a 500 and the caller dropped them
+        # silently instead of scoring them zero.
+        raw = float(np.dot(q_vec, d_vec))
+        return RelevanceResp(score=max(0.0, min(1.0, raw)))
     # Stub: Jaccard-like token overlap normalised into [0, 1]
     q_toks = _tokenize(req.query)
     t_toks = _tokenize(text)
